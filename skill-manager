@@ -1,0 +1,895 @@
+#!/bin/bash
+
+# Skill Manager
+# A script to manage Agent Skills from git repositories
+# Compliant with https://agentskills.io/ specification
+
+set -e
+
+# Default configuration
+GLOBAL_SKILLS_DIR="$HOME/.agents/skills"
+GLOBAL_REGISTRY="$HOME/.agents/registry.json"
+PROJECT_SKILLS_DIR=".agents/skills"
+PROJECT_REGISTRY=".agents/registry.json"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Global variables
+GLOBAL_FLAG=false
+CUSTOM_PATH=""
+CHECK_ONLY=false
+YES_FLAG=false
+ALL_FLAG=false
+SPECIFIC_SKILL=""
+
+# Parse global flags
+parse_global_flags() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -g|--global)
+                GLOBAL_FLAG=true
+                shift
+                ;;
+            --path)
+                CUSTOM_PATH="$2"
+                shift 2
+                ;;
+            --check)
+                CHECK_ONLY=true
+                shift
+                ;;
+            -y|--yes)
+                YES_FLAG=true
+                shift
+                ;;
+            --all)
+                ALL_FLAG=true
+                shift
+                ;;
+            -s|--skill)
+                SPECIFIC_SKILL="$2"
+                shift 2
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+    return 0
+}
+
+# Get skills directory
+get_skills_dir() {
+    if [[ -n "$CUSTOM_PATH" ]]; then
+        echo "$CUSTOM_PATH"
+    elif [[ "$GLOBAL_FLAG" == true ]]; then
+        echo "$GLOBAL_SKILLS_DIR"
+    else
+        echo "$PROJECT_SKILLS_DIR"
+    fi
+}
+
+# Get registry file
+get_registry_file() {
+    if [[ -n "$CUSTOM_PATH" ]]; then
+        local registry_dir
+        registry_dir=$(dirname "$CUSTOM_PATH")
+        echo "$registry_dir/registry.json"
+    elif [[ "$GLOBAL_FLAG" == true ]]; then
+        echo "$GLOBAL_REGISTRY"
+    else
+        echo "$PROJECT_REGISTRY"
+    fi
+}
+
+# Initialize skills system
+init_skills_system() {
+    local skills_dir
+    skills_dir=$(get_skills_dir)
+    local registry_file
+    registry_file=$(get_registry_file)
+    
+    mkdir -p "$skills_dir"
+    
+    local registry_dir
+    registry_dir=$(dirname "$registry_file")
+    mkdir -p "$registry_dir"
+    
+    if [[ ! -f "$registry_file" ]]; then
+        echo '{}' > "$registry_file"
+    fi
+}
+
+# Extract repo name from URL
+extract_repo_name() {
+    local url="$1"
+    local basename
+    
+    if [[ $url =~ ^git@([^:]+):(.+)$ ]]; then
+        basename=$(basename "${BASH_REMATCH[2]}" .git)
+    elif [[ $url =~ ^https?://([^/]+)/(.+)$ ]]; then
+        basename=$(basename "${BASH_REMATCH[2]}" .git)
+    elif [[ $url =~ ^([^/]+)/(.+)$ ]]; then
+        basename="${BASH_REMATCH[2]}"
+    else
+        basename=$(basename "$url" .git)
+    fi
+    
+    echo "$basename"
+}
+
+# Get git commit
+get_git_commit() {
+    local repo_path="$1"
+    if [[ -d "$repo_path/.git" ]]; then
+        cd "$repo_path"
+        git rev-parse HEAD 2>/dev/null || echo "unknown"
+    else
+        echo "unknown"
+    fi
+}
+
+# Get remote commit
+get_remote_commit() {
+    local url="$1"
+    local commit_hash
+    commit_hash=$(git ls-remote "$url" HEAD 2>/dev/null | awk '{print $1}')
+    
+    if [[ -z "$commit_hash" ]]; then
+        echo "unknown"
+    else
+        echo "$commit_hash"
+    fi
+}
+
+# Extract version from SKILL.md (fixed to handle nested YAML)
+extract_skill_version() {
+    local skill_path="$1"
+    local skill_file="$skill_path/SKILL.md"
+    
+    if [[ ! -f "$skill_file" ]]; then
+        echo ""
+        return
+    fi
+    
+    local version
+    version=$(sed -n '/^---$/,/^---$/p' "$skill_file" | grep -E 'version:' | sed 's/.*version: *//' | tr -d '"\''')
+    
+    if [[ -n "$version" ]]; then
+        echo "$version"
+    else
+        echo ""
+    fi
+}
+
+# Read registry
+read_registry() {
+    local registry_file
+    registry_file=$(get_registry_file)
+    
+    if [[ -f "$registry_file" ]]; then
+        cat "$registry_file"
+    else
+        echo '{}'
+    fi
+}
+
+# Write registry
+write_registry() {
+    local registry_file
+    registry_file=$(get_registry_file)
+    local content="$1"
+    echo "$content" > "$registry_file"
+}
+
+# Get skill info
+get_skill_info() {
+    local skill_name="$1"
+    local registry
+    registry=$(read_registry)
+    
+    echo "$registry" | jq -r --arg name "$skill_name" '.[$name] // empty'
+}
+
+# Save skill info
+save_skill_info() {
+    local skill_name="$1"
+    local skill_info="$2"
+    local registry
+    registry=$(read_registry)
+    
+    registry=$(echo "$registry" | jq --arg name "$skill_name" --argjson info "$skill_info" '.[$name] = $info')
+    write_registry "$registry"
+}
+
+# Remove skill from registry
+remove_skill_from_registry() {
+    local skill_name="$1"
+    local registry
+    registry=$(read_registry)
+    
+    registry=$(echo "$registry" | jq --arg name "$skill_name" 'del(.[$name])')
+    write_registry "$registry"
+}
+
+# Check if skill is installed
+is_skill_installed() {
+    local skill_name="$1"
+    local skill_info
+    skill_info=$(get_skill_info "$skill_name")
+    
+    if [[ -n "$skill_info" ]] && [[ "$skill_info" != "null" ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Add skill
+add_skill() {
+    local source="$1"
+    local force="${2:-false}"
+    
+    init_skills_system
+    
+    local repo_name
+    repo_name=$(extract_repo_name "$source")
+    
+    echo -e "${BLUE}Adding skill from: $source${NC}"
+    
+    if [[ "$CHECK_ONLY" == true ]]; then
+        echo "Check mode: would install from $source"
+        
+        local remote_commit
+        remote_commit=$(get_remote_commit "$source")
+        
+        if is_skill_installed "$repo_name"; then
+            local skill_info
+            skill_info=$(get_skill_info "$repo_name")
+            local current_commit
+            current_commit=$(echo "$skill_info" | jq -r '.commit')
+            
+            if [[ "$current_commit" != "$remote_commit" ]] && [[ "$remote_commit" != "unknown" ]]; then
+                echo -e "${YELLOW}Update available for '$repo_name'${NC}"
+                echo "Current commit: $current_commit"
+                echo "Remote commit: $remote_commit"
+            else
+                echo -e "${GREEN}Skill '$repo_name' is already up to date${NC}"
+            fi
+        else
+            echo -e "${GREEN}Skill '$repo_name' is not installed (would install)${NC}"
+            echo "Remote commit: $remote_commit"
+        fi
+        return 0
+    fi
+    
+    local temp_dir
+    temp_dir=$(mktemp -d)
+    
+    echo "Cloning repository to temporary directory..."
+    if ! git clone "$source" "$temp_dir"; then
+        echo -e "${RED}Failed to clone repository${NC}"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    echo -e "${GREEN}Successfully cloned repository${NC}"
+    
+    local skills_dir_in_repo="$temp_dir/skills"
+    
+    if [[ ! -d "$skills_dir_in_repo" ]]; then
+        echo -e "${YELLOW}Warning: No 'skills/' directory found in repository${NC}"
+        if [[ -f "$temp_dir/SKILL.md" ]]; then
+            echo "Repository appears to be a single skill. Using repository root as skill directory."
+            skills_dir_in_repo="$temp_dir"
+        else
+            rm -rf "$temp_dir"
+            return 1
+        fi
+    fi
+    
+    local skills_to_install=()
+    
+    if [[ -n "$SPECIFIC_SKILL" ]]; then
+        local specific_skill_path="$skills_dir_in_repo/$SPECIFIC_SKILL"
+        if [[ -d "$specific_skill_path" ]] && [[ -f "$specific_skill_path/SKILL.md" ]]; then
+            skills_to_install=("$SPECIFIC_SKILL")
+        else
+            echo -e "${RED}Skill '$SPECIFIC_SKILL' not found in repository${NC}"
+            rm -rf "$temp_dir"
+            return 1
+        fi
+    else
+        for skill_dir in "$skills_dir_in_repo"/*/; do
+            if [[ -d "$skill_dir" ]] && [[ -f "$skill_dir/SKILL.md" ]]; then
+                local skill_name
+                skill_name=$(basename "$skill_dir")
+                skills_to_install+=("$skill_name")
+            fi
+        done
+    fi
+    
+    if [[ ${#skills_to_install[@]} -eq 0 ]]; then
+        echo -e "${RED}No valid skills found in repository${NC}"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    echo "Found ${#skills_to_install[@]} skill(s) to install: ${skills_to_install[*]}"
+    
+    local remote_commit
+    remote_commit=$(get_remote_commit "$source")
+    
+    local skills_dir
+    skills_dir=$(get_skills_dir)
+    
+    for skill_name in "${skills_to_install[@]}"; do
+        echo ""
+        echo -e "${BLUE}Processing skill: $skill_name${NC}"
+        
+        if is_skill_installed "$skill_name"; then
+            if [[ "$force" != "true" ]]; then
+                if [[ "$CHECK_ONLY" == true ]]; then
+                    local skill_info
+                    skill_info=$(get_skill_info "$skill_name")
+                    local current_commit
+                    current_commit=$(echo "$skill_info" | jq -r '.commit')
+                    
+                    if [[ "$current_commit" != "$remote_commit" ]] && [[ "$remote_commit" != "unknown" ]]; then
+                        echo -e "${YELLOW}Skill '$skill_name' is already installed but update available${NC}"
+                        echo "Current commit: $current_commit"
+                        echo "Remote commit: $remote_commit"
+                    else
+                        echo -e "${GREEN}Skill '$skill_name' is already installed and up to date${NC}"
+                    fi
+                else
+                    echo -e "${YELLOW}Skill '$skill_name' is already installed.${NC}"
+                    echo "Use 'update' to upgrade or 'add --force' to reinstall."
+                fi
+                continue
+            else
+                echo -e "${YELLOW}Skill '$skill_name' already installed, reinstalling...${NC}"
+            fi
+        fi
+        
+        local skill_source_dir="$skills_dir_in_repo/$skill_name"
+        local skill_dest_dir="$skills_dir/$skill_name"
+        
+        echo "Installing skill to: $skill_dest_dir"
+        if [[ -d "$skill_dest_dir" ]]; then
+            rm -rf "$skill_dest_dir"
+        fi
+        
+        cp -r "$skill_source_dir" "$skill_dest_dir"
+        
+        local commit_hash
+        commit_hash=$(get_git_commit "$temp_dir")
+        
+        local version
+        version=$(extract_skill_version "$skill_dest_dir")
+        
+        local display_version
+        if [[ -n "$version" ]]; then
+            display_version="$version"
+        else
+            display_version="${commit_hash:0:10}"
+        fi
+        
+        local skill_info
+        skill_info=$(jq -n \
+            --arg name "$skill_name" \
+            --arg source "$source" \
+            --arg commit "$commit_hash" \
+            --arg remote_commit "$remote_commit" \
+            --arg version "$version" \
+            --arg installed_at "$(date -Iseconds)" \
+            '{
+                name: $name,
+                source: $source,
+                commit: $commit,
+                remote_commit: $remote_commit,
+                version: $version,
+                installed_at: $installed_at,
+                updated_at: $installed_at
+            }')
+        
+        save_skill_info "$skill_name" "$skill_info"
+        
+        echo -e "${GREEN}Skill '$skill_name' installed successfully${NC}"
+        echo "Version: $display_version"
+        echo "Location: $skill_dest_dir"
+    done
+    
+    rm -rf "$temp_dir"
+}
+
+# Update skill
+update_skill() {
+    local skill_name="$1"
+    
+    init_skills_system
+    
+    if [[ -z "$skill_name" ]]; then
+        echo -e "${BLUE}Updating all skills...${NC}"
+        
+        local registry
+        registry=$(read_registry)
+        
+        local skill_names
+        skill_names=$(echo "$registry" | jq -r 'keys[]')
+        
+        if [[ -z "$skill_names" ]]; then
+            echo "No skills installed."
+            return 0
+        fi
+        
+        for name in $skill_names; do
+            update_single_skill "$name"
+        done
+    else
+        update_single_skill "$skill_name"
+    fi
+}
+
+update_single_skill() {
+    local skill_name="$1"
+    
+    echo -e "${BLUE}Updating skill: $skill_name${NC}"
+    
+    if ! is_skill_installed "$skill_name"; then
+        echo -e "${RED}Skill '$skill_name' is not installed${NC}"
+        return 1
+    fi
+    
+    local skill_info
+    skill_info=$(get_skill_info "$skill_name")
+    
+    local source
+    source=$(echo "$skill_info" | jq -r '.source')
+    
+    local temp_dir
+    temp_dir=$(mktemp -d)
+    
+    echo "Fetching repository..."
+    if ! git clone "$source" "$temp_dir"; then
+        echo -e "${RED}Failed to clone repository${NC}"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    local remote_commit
+    remote_commit=$(get_git_commit "$temp_dir")
+    
+    local current_commit
+    current_commit=$(echo "$skill_info" | jq -r '.commit')
+    
+    if [[ "$CHECK_ONLY" == true ]]; then
+        if [[ "$current_commit" != "$remote_commit" ]]; then
+            echo -e "${YELLOW}Update available for '$skill_name'${NC}"
+            echo "Current commit: $current_commit"
+            echo "Remote commit: $remote_commit"
+        else
+            echo -e "${GREEN}Skill '$skill_name' is already up to date${NC}"
+            echo "Commit: $current_commit"
+        fi
+        rm -rf "$temp_dir"
+        return 0
+    fi
+    
+    if [[ "$current_commit" == "$remote_commit" ]]; then
+        echo -e "${GREEN}Skill '$skill_name' is already up to date${NC}"
+        echo "Commit: $current_commit"
+        rm -rf "$temp_dir"
+        return 0
+    else
+        echo "Current commit: $current_commit"
+        echo "Remote commit: $remote_commit"
+        echo "Update available."
+    fi
+    
+    local skills_dir_in_repo="$temp_dir/skills"
+    local skill_source_dir
+    
+    if [[ -d "$skills_dir_in_repo/$skill_name" ]]; then
+        skill_source_dir="$skills_dir_in_repo/$skill_name"
+    elif [[ -f "$temp_dir/SKILL.md" ]] && [[ "$(basename "$temp_dir")" == "$skill_name" ]]; then
+        skill_source_dir="$temp_dir"
+    else
+        echo -e "${RED}Could not find skill '$skill_name' in repository${NC}"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    local skills_dir
+    skills_dir=$(get_skills_dir)
+    local skill_dest_dir="$skills_dir/$skill_name"
+    
+    echo "Updating skill..."
+    rm -rf "$skill_dest_dir"
+    cp -r "$skill_source_dir" "$skill_dest_dir"
+    
+    local version
+    version=$(extract_skill_version "$skill_dest_dir")
+    
+    local updated_info
+    updated_info=$(echo "$skill_info" | jq \
+        --arg commit "$remote_commit" \
+        --arg remote_commit "$remote_commit" \
+        --arg version "$version" \
+        --arg updated_at "$(date -Iseconds)" \
+        '.commit = $commit | .remote_commit = $remote_commit | .version = $version | .updated_at = $updated_at')
+    
+    save_skill_info "$skill_name" "$updated_info"
+    
+    local display_version
+    if [[ -n "$version" ]]; then
+        display_version="$version"
+    else
+        display_version="${remote_commit:0:10}"
+    fi
+    
+    echo -e "${GREEN}Skill '$skill_name' updated successfully${NC}"
+    echo "New version: $display_version"
+    
+    rm -rf "$temp_dir"
+}
+
+# List skills
+list_skills() {
+    init_skills_system
+    
+    local scope_text="project"
+    if [[ "$GLOBAL_FLAG" == true ]] || [[ -n "$CUSTOM_PATH" ]]; then
+        scope_text="global"
+    fi
+    
+    echo -e "${BLUE}Installed skills ($scope_text):${NC}"
+    echo ""
+    
+    local registry
+    registry=$(read_registry)
+    
+    local skill_count
+    skill_count=$(echo "$registry" | jq 'length')
+    
+    if [[ "$skill_count" -eq 0 ]]; then
+        echo "No skills installed."
+        return 0
+    fi
+    
+    printf "%-30s %-15s %-40s %-20s\n" "NAME" "VERSION" "SOURCE" "UPDATED"
+    printf "%-30s %-15s %-40s %-20s\n" "----" "-------" "------" "-------"
+    
+    echo "$registry" | jq -r 'to_entries[] | @json' | while IFS= read -r line; do
+        local name
+        local version
+        local source
+        local updated_at
+        
+        name=$(echo "$line" | jq -r '.key')
+        version=$(echo "$line" | jq -r '.value.version')
+        source=$(echo "$line" | jq -r '.value.source')
+        updated_at=$(echo "$line" | jq -r '.value.updated_at')
+        
+        if [[ -z "$version" ]] || [[ "$version" == "null" ]]; then
+            local commit
+            commit=$(echo "$line" | jq -r '.value.commit')
+            version="${commit:0:10}"
+        fi
+        
+        if [[ ${#source} -gt 37 ]]; then
+            source="${source:0:37}..."
+        fi
+        
+        local date_str
+        date_str=$(date -d "$updated_at" "+%Y-%m-%d %H:%M" 2>/dev/null || echo "$updated_at")
+        
+        printf "%-30s %-15s %-40s %-20s\n" "$name" "$version" "$source" "$date_str"
+    done
+}
+
+# Show skill info
+show_skill_info() {
+    local skill_name="$1"
+    
+    init_skills_system
+    
+    if ! is_skill_installed "$skill_name"; then
+        echo -e "${RED}Skill '$skill_name' is not installed${NC}"
+        return 1
+    fi
+    
+    local skill_info
+    skill_info=$(get_skill_info "$skill_name")
+    
+    echo -e "${BLUE}Skill Information: $skill_name${NC}"
+    echo ""
+    
+    local source
+    source=$(echo "$skill_info" | jq -r '.source')
+    
+    local commit
+    commit=$(echo "$skill_info" | jq -r '.commit')
+    
+    local remote_commit
+    remote_commit=$(echo "$skill_info" | jq -r '.remote_commit')
+    
+    local version
+    version=$(echo "$skill_info" | jq -r '.version')
+    
+    local installed_at
+    installed_at=$(echo "$skill_info" | jq -r '.installed_at')
+    
+    local updated_at
+    updated_at=$(echo "$skill_info" | jq -r '.updated_at')
+    
+    echo "Source: $source"
+    
+    if [[ -n "$version" ]] && [[ "$version" != "null" ]]; then
+        echo "Version: $version"
+    fi
+    
+    echo "Current Commit: $commit"
+    echo "Remote Commit: $remote_commit"
+    echo "Installed At: $installed_at"
+    echo "Updated At: $updated_at"
+    
+    if [[ "$commit" != "$remote_commit" ]] && [[ "$remote_commit" != "unknown" ]]; then
+        echo -e "${YELLOW}Update available${NC}"
+    elif [[ "$commit" == "$remote_commit" ]]; then
+        echo -e "${GREEN}Up to date${NC}"
+    fi
+    
+    local skills_dir
+    skills_dir=$(get_skills_dir)
+    local skill_path="$skills_dir/$skill_name"
+    
+    if [[ -f "$skill_path/SKILL.md" ]]; then
+        echo ""
+        echo "Skill Metadata:"
+        sed -n '/^---$/,/^---$/p' "$skill_path/SKILL.md" | head -n -1 | tail -n +2
+    fi
+    
+    if [[ -d "$skill_path/scripts" ]]; then
+        echo ""
+        echo "Scripts:"
+        ls -1 "$skill_path/scripts" 2>/dev/null | while IFS= read -r script; do
+            echo "  - $script"
+        done
+    fi
+    
+    if [[ -d "$skill_path/references" ]]; then
+        echo ""
+        echo "References:"
+        ls -1 "$skill_path/references" 2>/dev/null | while IFS= read -r ref; do
+            echo "  - $ref"
+        done
+    fi
+}
+
+# Remove skill
+remove_skill() {
+    local skill_name="$1"
+    
+    init_skills_system
+    
+    if [[ "$ALL_FLAG" == true ]]; then
+        echo -e "${BLUE}Removing all skills...${NC}"
+        
+        local registry
+        registry=$(read_registry)
+        
+        local skill_names
+        skill_names=$(echo "$registry" | jq -r 'keys[]')
+        
+        if [[ -z "$skill_names" ]]; then
+            echo "No skills installed."
+            return 0
+        fi
+        
+        for name in $skill_names; do
+            remove_single_skill "$name"
+        done
+    else
+        if [[ -z "$skill_name" ]]; then
+            echo -e "${RED}Error: remove command requires a skill name or --all flag${NC}"
+            show_usage
+            exit 1
+        fi
+        remove_single_skill "$skill_name"
+    fi
+}
+
+remove_single_skill() {
+    local skill_name="$1"
+    
+    echo -e "${BLUE}Removing skill: $skill_name${NC}"
+    
+    if ! is_skill_installed "$skill_name"; then
+        echo -e "${YELLOW}Skill '$skill_name' is not in registry (skipping)${NC}"
+        return 0
+    fi
+    
+    if [[ "$YES_FLAG" != true ]]; then
+        read -p "Are you sure you want to remove '$skill_name'? (y/N): " confirm
+        if [[ "$confirm" != "y" ]] && [[ "$confirm" != "Y" ]]; then
+            echo "Cancelled."
+            return 0
+        fi
+    fi
+    
+    local skills_dir
+    skills_dir=$(get_skills_dir)
+    local skill_path="$skills_dir/$skill_name"
+    
+    if [[ -d "$skill_path" ]]; then
+        rm -rf "$skill_path"
+        echo -e "${GREEN}Removed skill directory${NC}"
+    fi
+    
+    remove_skill_from_registry "$skill_name"
+    
+    echo -e "${GREEN}Skill '$skill_name' removed successfully${NC}"
+}
+
+# Show usage
+show_usage() {
+    cat << EOF
+Skill Manager - Manage Agent Skills from git repositories
+Compliant with https://agentskills.io/ specification
+
+Usage: $0 <command> [options] [arguments]
+
+Global Options:
+    -g, --global          Use global skills directory (~/.agents/skills/)
+    --path <folder>       Use custom skills directory
+    -y, --yes             Auto-confirm prompts (e.g., for remove)
+    --check               Only check for updates, don't apply them
+    --all                 Apply to all skills (for remove)
+    -s, --skill <name>    Install only specific skill from repository
+
+Commands:
+    add <source>          Add (install) skills from a git URL
+    add --force <source> Reinstall skills even if already installed
+    update [skill]        Update a specific skill or all skills
+    list, ls              List all installed skills with their versions
+    info <skill>          Show detailed information about a skill
+    remove, rm [skill]    Remove a skill (or all skills with --all)
+
+Examples:
+    $0 add <repository-url>
+    $0 add -g <repository-url>
+    $0 add --skill nginx-validation <repository-url>
+    $0 update nginx-validation
+    $0 update -g
+    $0 update --check nginx-validation
+    $0 list
+    $0 ls -g
+    $0 info nginx-validation
+    $0 remove nginx-validation
+    $0 rm --all -y
+
+Notes:
+    - Without -g, operates on project directory (.agents/skills/)
+    - With -g, operates on global directory (~/.agents/skills/)
+    - Version is read from metadata.version in SKILL.md, falls back to commit hash
+    - Only removes skills that are in the registry; ignores other files in skills directory
+
+EOF
+}
+
+# Main function
+main() {
+    # Collect all flags and separate from command/arguments
+    local command=""
+    local command_args=()
+    local all_flags=()
+    
+    for arg in "$@"; do
+        case "$arg" in
+            -g|--global|--path|--check|-y|--yes|--all|-s|--skill)
+                all_flags+=("$arg")
+                ;;
+            *)
+                if [[ -z "$command" ]]; then
+                    command="$arg"
+                else
+                    command_args+=("$arg")
+                fi
+                ;;
+        esac
+    done
+    
+    # Also check command_args for flags
+    for arg in "${command_args[@]}"; do
+        case "$arg" in
+            -g|--global|--path|--check|-y|--yes|--all|-s|--skill)
+                all_flags+=("$arg")
+                ;;
+        esac
+    done
+    
+    # Parse global flags
+    parse_global_flags "${all_flags[@]}"
+    
+    # Filter command_args to remove flags
+    local filtered_command_args=()
+    for arg in "${command_args[@]}"; do
+        case "$arg" in
+            -g|--global|--path|--check|-y|--yes|--all|-s|--skill)
+                ;;
+            *)
+                filtered_command_args+=("$arg")
+                ;;
+        esac
+    done
+    command_args=("${filtered_command_args[@]}")
+    
+    if [[ -z "$command" ]]; then
+        show_usage
+        exit 1
+    fi
+    
+    case "$command" in
+        add|install)
+            if [[ ${#command_args[@]} -lt 1 ]]; then
+                echo -e "${RED}Error: add command requires a source URL${NC}"
+                show_usage
+                exit 1
+            fi
+            
+            if [[ "${command_args[0]}" == "--force" ]]; then
+                if [[ ${#command_args[@]} -lt 2 ]]; then
+                    echo -e "${RED}Error: --force requires a source URL${NC}"
+                    show_usage
+                    exit 1
+                fi
+                add_skill "${command_args[1]}" true
+            else
+                add_skill "${command_args[0]}" false
+            fi
+            ;;
+        update)
+            update_skill "${command_args[0]:-}"
+            ;;
+        list|ls)
+            list_skills
+            ;;
+        info)
+            if [[ ${#command_args[@]} -lt 1 ]]; then
+                echo -e "${RED}Error: info command requires a skill name${NC}"
+                show_usage
+                exit 1
+            fi
+            show_skill_info "${command_args[0]}"
+            ;;
+        remove|rm)
+            remove_skill "${command_args[0]:-}"
+            ;;
+        help|--help|-h)
+            show_usage
+            ;;
+        *)
+            echo -e "${RED}Unknown command: $command${NC}"
+            echo ""
+            show_usage
+            exit 1
+            ;;
+    esac
+}
+
+# Check for jq dependency
+if ! command -v jq &> /dev/null; then
+    echo -e "${RED}Error: jq is required but not installed${NC}"
+    echo "Install jq: sudo apt-get install jq (Debian/Ubuntu)"
+    echo "           brew install jq (macOS)"
+    exit 1
+fi
+
+# Run main function
+main "$@"
