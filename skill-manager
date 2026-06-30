@@ -6,6 +6,8 @@
 
 set -e
 
+SKILL_MANAGER_VERSION="0.1.0"
+
 # Default configuration
 GLOBAL_SKILLS_DIR="$HOME/.agents/skills"
 GLOBAL_REGISTRY="$HOME/.agents/registry.json"
@@ -293,6 +295,7 @@ add_skill() {
         local cur_src
         if [[ "$single_skill" == true ]]; then cur_src="$skills_root"; else cur_src="$skills_root/$cur"; fi
         local dep
+        # shellcheck disable=SC2046  # intentional word-split of dependency names
         for dep in $(get_skill_requires "$cur_src"); do
             if [[ -f "$skills_root/$dep/SKILL.md" ]]; then
                 local seen=false x
@@ -385,6 +388,7 @@ update_skill() {
             return 0
         fi
 
+        # shellcheck disable=SC2086  # intentional word-split of newline-separated keys
         for name in $skill_names; do
             update_single_skill "$name"
         done
@@ -601,7 +605,7 @@ show_skill_info() {
     if [[ -n "$reqs" ]]; then
         echo ""
         echo "Requires:"
-        echo "$reqs" | while IFS= read -r r; do [[ -n "$r" ]] && echo "  - $r"; done
+        echo "$reqs" | while IFS= read -r r; do if [[ -n "$r" ]]; then echo "  - $r"; fi; done
     fi
 
     if [[ -d "$skill_path/scripts" ]]; then
@@ -641,6 +645,7 @@ remove_skill() {
             return 0
         fi
 
+        # shellcheck disable=SC2086  # intentional word-split of newline-separated keys
         for name in $skill_names; do
             remove_single_skill "$name"
         done
@@ -665,7 +670,7 @@ remove_single_skill() {
     fi
 
     if [[ "$YES_FLAG" != true ]]; then
-        read -p "Are you sure you want to remove '$skill_name'? (y/N): " confirm
+        read -r -p "Are you sure you want to remove '$skill_name'? (y/N): " confirm
         if [[ "$confirm" != "y" ]] && [[ "$confirm" != "Y" ]]; then
             echo "Cancelled."
             return 0
@@ -709,6 +714,7 @@ Commands:
     list, ls              List all installed skills with their versions
     info <skill>          Show detailed information about a skill
     remove, rm [skill]    Remove a skill (or all skills with --all)
+    version               Print the skill-manager version (also -v, --version)
 
 Examples:
     $0 add <repository-url>
@@ -758,6 +764,8 @@ main() {
                 SPECIFIC_SKILL="$2"; shift 2 ;;
             -h|--help)
                 command="${command:-help}"; shift ;;
+            -v|--version)
+                echo "skill-manager $SKILL_MANAGER_VERSION"; exit 0 ;;
             -*)
                 echo -e "${RED}Unknown flag: $1${NC}"; show_usage; exit 1 ;;
             *)
@@ -799,6 +807,9 @@ main() {
             ;;
         help)
             show_usage
+            ;;
+        version)
+            echo "skill-manager $SKILL_MANAGER_VERSION"
             ;;
         *)
             echo -e "${RED}Unknown command: $command${NC}"

@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install jq + shellcheck
+        run: sudo apt-get update && sudo apt-get install -y jq shellcheck
+      - name: ShellCheck
+        run: shellcheck skill-manager tests/test.sh
+      - name: Tests
+        run: bash tests/test.sh
