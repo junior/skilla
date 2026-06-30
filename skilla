@@ -29,6 +29,8 @@ YES_FLAG=false
 ALL_FLAG=false
 FORCE_FLAG=false
 SPECIFIC_SKILL=""
+BUNDLE_FILE=""
+TRUST_KEY=""
 
 # Get skills directory
 get_skills_dir() {
@@ -691,6 +693,32 @@ remove_single_skill() {
     echo -e "${GREEN}Skill '$skill_name' removed successfully${NC}"
 }
 
+# Verify a signed artifact (Phase 2) against the cosign trust anchor — cosign v3
+# Sigstore bundle. Default bundle: <artifact>.bundle. Default key: --key, else
+# $SKILLA_TRUST_KEY, else ~/.agents/cosign.pub. Requires cosign.
+verify_artifact() {
+    local artifact="$1"
+    local bundle="${BUNDLE_FILE:-$artifact.bundle}"
+    local key="${TRUST_KEY:-${SKILLA_TRUST_KEY:-$HOME/.agents/cosign.pub}}"
+
+    if ! command -v cosign >/dev/null 2>&1; then
+        echo -e "${RED}cosign is required for 'verify' but is not installed${NC}"
+        echo "Install: https://docs.sigstore.dev/cosign/installation/"
+        exit 1
+    fi
+    [[ -f "$artifact" ]] || { echo -e "${RED}artifact not found: $artifact${NC}"; exit 1; }
+    [[ -f "$bundle" ]] || { echo -e "${RED}bundle not found: $bundle (pass --bundle)${NC}"; exit 1; }
+    [[ -f "$key" ]] || { echo -e "${RED}trust key not found: $key (pass --key or set SKILLA_TRUST_KEY)${NC}"; exit 1; }
+
+    echo -e "${BLUE}Verifying $artifact against $key ...${NC}"
+    if cosign verify-blob --key "$key" --bundle "$bundle" "$artifact"; then
+        echo -e "${GREEN}OK — signature is valid${NC}"
+    else
+        echo -e "${RED}FAILED — signature did not verify${NC}"
+        exit 1
+    fi
+}
+
 # Show usage
 show_usage() {
     cat << EOF
@@ -707,6 +735,8 @@ Global Options:
     --all                 Apply to all skills (for remove)
     --force               Reinstall skills even if already installed (for add)
     -s, --skill <name>    Install only a specific skill from the repository
+    --bundle <file>       Sigstore bundle for 'verify' (default: <artifact>.bundle)
+    --key <file>          Public key for 'verify' (default: \$SKILLA_TRUST_KEY or ~/.agents/cosign.pub)
 
 Commands:
     add <source>          Add (install) skills from a git URL (with --force to reinstall)
@@ -714,6 +744,7 @@ Commands:
     list, ls              List all installed skills with their versions
     info <skill>          Show detailed information about a skill
     remove, rm [skill]    Remove a skill (or all skills with --all)
+    verify <artifact>     Verify a signed release artifact (cosign) against the trust key
     version               Print the skilla version (also -v, --version)
 
 Examples:
@@ -762,6 +793,12 @@ main() {
             -s|--skill)
                 if [[ -z "${2:-}" ]]; then echo -e "${RED}Error: --skill requires a name${NC}"; exit 1; fi
                 SPECIFIC_SKILL="$2"; shift 2 ;;
+            --bundle)
+                if [[ -z "${2:-}" ]]; then echo -e "${RED}Error: --bundle requires a file${NC}"; exit 1; fi
+                BUNDLE_FILE="$2"; shift 2 ;;
+            --key)
+                if [[ -z "${2:-}" ]]; then echo -e "${RED}Error: --key requires a public key file${NC}"; exit 1; fi
+                TRUST_KEY="$2"; shift 2 ;;
             -h|--help)
                 command="${command:-help}"; shift ;;
             -v|--version)
@@ -810,6 +847,14 @@ main() {
             ;;
         version)
             echo "skilla $SKILLA_VERSION"
+            ;;
+        verify)
+            if [[ ${#command_args[@]} -lt 1 ]]; then
+                echo -e "${RED}Error: verify requires an artifact (e.g. a release .tgz)${NC}"
+                show_usage
+                exit 1
+            fi
+            verify_artifact "${command_args[0]}"
             ;;
         *)
             echo -e "${RED}Unknown command: $command${NC}"
