@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>skilla — Agent Skills, installed. Pure bash.</title>
+<meta name="description" content="A tiny bash CLI to install agentskills.io Agent Skills from git — no Node.js, with dependency resolution. Devin-friendly (.agents/skills)." />
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --border:#26303c; --fg:#e6edf3; --muted:#9aa7b4;
+    --accent:#2dd4a7; --accent2:#36b3ff; --code:#0a0e14; --radius:14px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1100px 500px at 50% -10%,#13241f 0%,var(--bg) 55%);
+    color:var(--fg);font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:920px;margin:0 auto;padding:0 22px}
+  a{color:var(--accent2);text-decoration:none} a:hover{text-decoration:underline}
+  code,kbd{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  header{padding:78px 0 40px;text-align:center}
+  .logo{font-size:60px;font-weight:800;letter-spacing:-.03em;
+    background:linear-gradient(92deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .tag{font-size:21px;color:var(--fg);margin:14px 0 6px;font-weight:600}
+  .sub{color:var(--muted);max-width:620px;margin:0 auto 26px}
+  .badges{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-bottom:26px}
+  .badge{font-size:12.5px;color:var(--muted);border:1px solid var(--border);background:var(--panel);
+    padding:5px 11px;border-radius:20px}
+  .cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+  .btn{padding:11px 18px;border-radius:10px;font-weight:600;border:1px solid var(--border)}
+  .btn.primary{background:var(--accent);color:#06231b;border-color:var(--accent)}
+  .btn.ghost{background:var(--panel);color:var(--fg)}
+  .install{margin:30px auto 0;max-width:720px}
+  pre{background:var(--code);border:1px solid var(--border);border-radius:var(--radius);
+    padding:16px 18px;overflow-x:auto;margin:10px 0}
+  pre code{font-size:13.5px;color:#d7e2ee;white-space:pre}
+  .cmt{color:#5e6b78}
+  h2{font-size:22px;margin:52px 0 6px;letter-spacing:-.01em}
+  .lead{color:var(--muted);margin:0 0 18px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px}
+  .card h3{margin:0 0 6px;font-size:15.5px}
+  .card p{margin:0;color:var(--muted);font-size:14px}
+  .card .k{color:var(--accent)}
+  table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--border);
+    border-radius:var(--radius);overflow:hidden;font-size:14px}
+  th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--border)}
+  th{color:var(--muted);font-weight:600} tr:last-child td{border-bottom:0}
+  td code{color:var(--accent)}
+  .vs{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:560px){.vs{grid-template-columns:1fr}}
+  .vs .card.win{border-color:var(--accent)}
+  footer{color:var(--muted);text-align:center;padding:50px 0 40px;font-size:13.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">skilla</div>
+    <p class="tag">Agent Skills, installed. <span style="color:var(--accent)">Pure bash.</span></p>
+    <p class="sub">A tiny CLI that installs <a href="https://agentskills.io/">agentskills.io</a> Agent
+      Skills from any git repo — with dependency resolution, into the <code>.agents/skills/</code>
+      path agents like Devin index. No Node.js. No runtime. Just <code>bash</code> + <code>git</code> + <code>jq</code>.</p>
+    <div class="badges">
+      <span class="badge">⚡ zero Node.js</span>
+      <span class="badge">🧩 resolves dependencies</span>
+      <span class="badge">📁 .agents/skills (Devin-friendly)</span>
+      <span class="badge">🔒 no code runs at install</span>
+      <span class="badge">📜 MIT</span>
+    </div>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/junior/skilla">View on GitHub</a>
+      <a class="btn ghost" href="https://github.com/junior/skilla#usage">Docs</a>
+    </div>
+    <div class="install">
+      <pre><code><span class="cmt"># install (clone + symlink onto your PATH)</span>
+git clone git@github.com:junior/skilla.git && ln -s "$PWD/skilla/skilla" ~/.local/bin/skilla
+
+<span class="cmt"># then</span>
+skilla add git@github.com:acme/skills.git --skill nginx   <span class="cmt"># installs nginx + its deps</span></code></pre>
+    </div>
+  </header>
+
+  <h2>Why skilla</h2>
+  <p class="lead">The agent-skills CLI space is crowded — and almost all of it rides on Node/<code>npx</code>. skilla is deliberately small and runtime-free.</p>
+  <div class="grid">
+    <div class="card"><h3><span class="k">No Node.js</span></h3><p>One ~800-line bash script. If you have git and jq, you can install skills — on a server, a CI runner, or a locked-down box.</p></div>
+    <div class="card"><h3>Dependency resolution</h3><p>A skill's <code>requires:</code> (or <code>plugin.json</code> <code>requiredSkills</code>) are pulled automatically from the same source — transitively.</p></div>
+    <div class="card"><h3>Project &amp; global scopes</h3><p>Install into a repo's <code>.agents/skills/</code> or your home <code>~/.agents/skills/</code>, tracked in a small JSON registry.</p></div>
+    <div class="card"><h3>Safe by default</h3><p>It clones and copies — <strong>nothing executes at install time</strong>. A skill's scripts only run later, when an agent uses it.</p></div>
+    <div class="card"><h3>Clean lifecycle</h3><p><code>add</code>, <code>update</code>, <code>list</code>, <code>info</code>, <code>remove</code> — registry-scoped, so it only manages what it installed.</p></div>
+    <div class="card"><h3>Signing-ready</h3><p>Built to verify signed skills before install (on the roadmap), so a catalog can enforce provenance end-to-end.</p></div>
+  </div>
+
+  <h2>bash, not Node</h2>
+  <div class="vs">
+    <div class="card win"><h3 class="k">skilla</h3><p><code>bash</code> + <code>git</code> + <code>jq</code>. No package manager, no <code>node_modules</code>, no runtime version to match. Copy one file and go.</p></div>
+    <div class="card"><h3>npx-based tools</h3><p>Require Node.js + npm and a network fetch of the package each run — awkward on minimal images and restricted environments.</p></div>
+  </div>
+
+  <h2>Commands</h2>
+  <table>
+    <tr><th>Command</th><th>What it does</th></tr>
+    <tr><td><code>skilla add &lt;git-url&gt;</code></td><td>Install skills from a repo (<code>--skill</code> one, <code>--force</code> reinstall)</td></tr>
+    <tr><td><code>skilla list</code></td><td>List installed skills + versions</td></tr>
+    <tr><td><code>skilla info &lt;skill&gt;</code></td><td>Details + declared dependencies</td></tr>
+    <tr><td><code>skilla update [skill]</code></td><td>Update one, or all</td></tr>
+    <tr><td><code>skilla remove &lt;skill&gt;</code></td><td>Remove (registry-scoped)</td></tr>
+  </table>
+
+  <footer>
+    <a href="https://github.com/junior/skilla">github.com/junior/skilla</a> · MIT ·
+    follows the <a href="https://agentskills.io/specification">Agent Skills</a> spec
+  </footer>
+</div>
+</body>
+</html>

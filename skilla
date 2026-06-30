@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# Skill Manager
+# skilla
 # A script to manage Agent Skills from git repositories
 # Compliant with https://agentskills.io/ specification
 
 set -e
 
-SKILL_MANAGER_VERSION="0.1.0"
+SKILLA_VERSION="0.1.0"
 
 # Default configuration
 GLOBAL_SKILLS_DIR="$HOME/.agents/skills"
@@ -694,7 +694,7 @@ remove_single_skill() {
 # Show usage
 show_usage() {
     cat << EOF
-Skill Manager - Manage Agent Skills from git repositories
+skilla - Manage Agent Skills from git repositories
 Compliant with https://agentskills.io/ specification
 
 Usage: $0 <command> [options] [arguments]
@@ -714,7 +714,7 @@ Commands:
     list, ls              List all installed skills with their versions
     info <skill>          Show detailed information about a skill
     remove, rm [skill]    Remove a skill (or all skills with --all)
-    version               Print the skill-manager version (also -v, --version)
+    version               Print the skilla version (also -v, --version)
 
 Examples:
     $0 add <repository-url>
@@ -765,7 +765,7 @@ main() {
             -h|--help)
                 command="${command:-help}"; shift ;;
             -v|--version)
-                echo "skill-manager $SKILL_MANAGER_VERSION"; exit 0 ;;
+                echo "skilla $SKILLA_VERSION"; exit 0 ;;
             -*)
                 echo -e "${RED}Unknown flag: $1${NC}"; show_usage; exit 1 ;;
             *)
@@ -809,7 +809,7 @@ main() {
             show_usage
             ;;
         version)
-            echo "skill-manager $SKILL_MANAGER_VERSION"
+            echo "skilla $SKILLA_VERSION"
             ;;
         *)
             echo -e "${RED}Unknown command: $command${NC}"

@@ -16,6 +16,6 @@ jobs:
       - name: Install jq + shellcheck
         run: sudo apt-get update && sudo apt-get install -y jq shellcheck
       - name: ShellCheck
-        run: shellcheck skill-manager tests/test.sh
+        run: shellcheck skilla tests/test.sh
       - name: Tests
         run: bash tests/test.sh

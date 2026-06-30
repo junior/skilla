@@ -1,4 +1,4 @@
-# skill-manager
+# skilla
 
 A small, dependency-light CLI for installing [Agent Skills](https://agentskills.io/)
 from git repositories into the locations agents read them from.
@@ -20,18 +20,18 @@ in a small JSON registry so it can `list`, `update`, and `remove` cleanly.
 
 ```bash
 # clone + symlink onto your PATH
-git clone git@github.com:junior/skill-manager.git
-ln -s "$PWD/skill-manager/skill-manager" ~/.local/bin/skill-manager
+git clone git@github.com:junior/skilla.git
+ln -s "$PWD/skilla/skilla" ~/.local/bin/skilla
 
 # …or fetch the single script directly (once the repo is public):
-# curl -fsSL https://raw.githubusercontent.com/junior/skill-manager/main/skill-manager \
-#   -o ~/.local/bin/skill-manager && chmod +x ~/.local/bin/skill-manager
+# curl -fsSL https://raw.githubusercontent.com/junior/skilla/main/skilla \
+#   -o ~/.local/bin/skilla && chmod +x ~/.local/bin/skilla
 ```
 
 ## Usage
 
 ```text
-skill-manager <command> [options] [arguments]
+skilla <command> [options] [arguments]
 
 Commands:
   add <git-url>        Install skills from a repo (with --force to reinstall)
@@ -54,13 +54,13 @@ Options:
 ### Examples
 
 ```bash
-skill-manager add git@github.com:acme/skills.git              # every skill in the repo
-skill-manager add git@github.com:acme/skills.git -s nginx     # one skill (+ its deps)
-skill-manager add -g git@github.com:acme/skills.git           # into ~/.agents/skills
-skill-manager list
-skill-manager info nginx
-skill-manager update nginx
-skill-manager remove nginx
+skilla add git@github.com:acme/skills.git              # every skill in the repo
+skilla add git@github.com:acme/skills.git -s nginx     # one skill (+ its deps)
+skilla add -g git@github.com:acme/skills.git           # into ~/.agents/skills
+skilla list
+skilla info nginx
+skilla update nginx
+skilla remove nginx
 ```
 
 ## How it works
@@ -90,7 +90,7 @@ skill-manager remove nginx
 
 ```bash
 bash tests/test.sh     # self-contained: builds a fixture catalog, asserts install + deps
-shellcheck skill-manager tests/test.sh
+shellcheck skilla tests/test.sh
 ```
 
 ## License

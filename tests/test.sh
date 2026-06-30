@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2015  # `cond && pass || fail` is intentional; pass/fail are echo/exit (C never runs spuriously)
-# Self-contained tests for skill-manager. Builds a fixture "catalog" git repo
+# Self-contained tests for skilla. Builds a fixture "catalog" git repo
 # (skill-b depends on skill-a), then asserts install behaviour. Needs git + jq.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SM="$HERE/../skill-manager"
+SM="$HERE/../skilla"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -41,7 +41,7 @@ DEST="$TMP/proj/.agents/skills"
 REG="$TMP/proj/.agents/registry.json"
 
 echo "test: version"
-"$SM" --version | grep -q '^skill-manager ' && pass "--version prints version" || fail "--version"
+"$SM" --version | grep -q '^skilla ' && pass "--version prints version" || fail "--version"
 
 echo "test: parser keeps the source (value flags must not consume it)"
 out="$("$SM" add --skill skill-b --check --path "$DEST" "$CAT" 2>&1)"
