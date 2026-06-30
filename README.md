@@ -19,13 +19,13 @@ in a small JSON registry so it can `list`, `update`, and `remove` cleanly.
 ## Install
 
 ```bash
-# clone + symlink onto your PATH
-git clone git@github.com:junior/skilla.git
-ln -s "$PWD/skilla/skilla" ~/.local/bin/skilla
+# fetch the single script onto your PATH (no package manager)
+curl -fsSL https://raw.githubusercontent.com/junior/skilla/main/skilla \
+  -o ~/.local/bin/skilla && chmod +x ~/.local/bin/skilla
 
-# …or fetch the single script directly (once the repo is public):
-# curl -fsSL https://raw.githubusercontent.com/junior/skilla/main/skilla \
-#   -o ~/.local/bin/skilla && chmod +x ~/.local/bin/skilla
+# …or clone + symlink
+git clone https://github.com/junior/skilla.git
+ln -s "$PWD/skilla/skilla" ~/.local/bin/skilla
 ```
 
 ## Usage

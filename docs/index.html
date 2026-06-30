@@ -71,8 +71,8 @@
       <a class="btn ghost" href="https://github.com/junior/skilla#usage">Docs</a>
     </div>
     <div class="install">
-      <pre><code><span class="cmt"># install (clone + symlink onto your PATH)</span>
-git clone git@github.com:junior/skilla.git && ln -s "$PWD/skilla/skilla" ~/.local/bin/skilla
+      <pre><code><span class="cmt"># install — one curl, no package manager</span>
+curl -fsSL https://raw.githubusercontent.com/junior/skilla/main/skilla -o ~/.local/bin/skilla && chmod +x ~/.local/bin/skilla
 
 <span class="cmt"># then</span>
 skilla add git@github.com:acme/skills.git --skill nginx   <span class="cmt"># installs nginx + its deps</span></code></pre>
@@ -90,11 +90,10 @@ skilla add git@github.com:acme/skills.git --skill nginx   <span class="cmt"># in
     <div class="card"><h3>Signing-ready</h3><p>Built to verify signed skills before install (on the roadmap), so a catalog can enforce provenance end-to-end.</p></div>
   </div>
 
-  <h2>bash, not Node</h2>
-  <div class="vs">
-    <div class="card win"><h3 class="k">skilla</h3><p><code>bash</code> + <code>git</code> + <code>jq</code>. No package manager, no <code>node_modules</code>, no runtime version to match. Copy one file and go.</p></div>
-    <div class="card"><h3>npx-based tools</h3><p>Require Node.js + npm and a network fetch of the package each run — awkward on minimal images and restricted environments.</p></div>
-  </div>
+  <h2>No Node.js — that's the point</h2>
+  <p class="lead">skilla is a single bash script: it needs only <code>bash</code>, <code>git</code>, and <code>jq</code> —
+    no Node, no npm, no <code>node_modules</code>, no runtime version to match. Copy one file and go. (Most other
+    agent-skills CLIs run through <code>npx</code>/Node; <strong>skilla doesn't</strong>.)</p>
 
   <h2>Commands</h2>
   <table>
