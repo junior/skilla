@@ -611,16 +611,16 @@ show_skill_info() {
     if [[ -d "$skill_path/scripts" ]]; then
         echo ""
         echo "Scripts:"
-        ls -1 "$skill_path/scripts" 2>/dev/null | while IFS= read -r script; do
-            echo "  - $script"
+        for f in "$skill_path/scripts"/*; do
+            if [[ -e "$f" ]]; then echo "  - $(basename "$f")"; fi
         done
     fi
 
     if [[ -d "$skill_path/references" ]]; then
         echo ""
         echo "References:"
-        ls -1 "$skill_path/references" 2>/dev/null | while IFS= read -r ref; do
-            echo "  - $ref"
+        for f in "$skill_path/references"/*; do
+            if [[ -e "$f" ]]; then echo "  - $(basename "$f")"; fi
         done
     fi
 }

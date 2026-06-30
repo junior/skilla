@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2015  # `cond && pass || fail` is intentional; pass/fail are echo/exit (C never runs spuriously)
 # Self-contained tests for skill-manager. Builds a fixture "catalog" git repo
 # (skill-b depends on skill-a), then asserts install behaviour. Needs git + jq.
 set -euo pipefail
