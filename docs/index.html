@@ -71,8 +71,11 @@
       <a class="btn ghost" href="https://github.com/junior/skilla#usage">Docs</a>
     </div>
     <div class="install">
-      <pre><code><span class="cmt"># install — one curl, no package manager</span>
-curl -fsSL https://raw.githubusercontent.com/junior/skilla/main/skilla -o ~/.local/bin/skilla && chmod +x ~/.local/bin/skilla
+      <pre><code><span class="cmt"># install — managed, via mise (no Node.js)</span>
+mise use -g 'github:junior/skilla[exe=skilla,matching=skilla]@0.1.0'
+
+<span class="cmt"># …or grab the single script</span>
+curl -fsSL https://raw.githubusercontent.com/junior/skilla/v0.1.0/skilla -o ~/.local/bin/skilla && chmod +x ~/.local/bin/skilla
 
 <span class="cmt"># then</span>
 skilla add git@github.com:acme/skills.git --skill nginx   <span class="cmt"># installs nginx + its deps</span></code></pre>

@@ -18,14 +18,17 @@ in a small JSON registry so it can `list`, `update`, and `remove` cleanly.
 
 ## Install
 
-```bash
-# fetch the single script onto your PATH (no package manager)
-curl -fsSL https://raw.githubusercontent.com/junior/skilla/main/skilla \
-  -o ~/.local/bin/skilla && chmod +x ~/.local/bin/skilla
+**Managed (recommended) — via [mise](https://mise.jdx.dev):**
 
-# …or clone + symlink
-git clone https://github.com/junior/skilla.git
-ln -s "$PWD/skilla/skilla" ~/.local/bin/skilla
+```bash
+mise use -g 'github:junior/skilla[exe=skilla,matching=skilla]@0.1.0'
+```
+
+**Quick — fetch the single script onto your PATH:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/junior/skilla/v0.1.0/skilla \
+  -o ~/.local/bin/skilla && chmod +x ~/.local/bin/skilla
 ```
 
 ## Usage
