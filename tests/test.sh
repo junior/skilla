@@ -67,5 +67,25 @@ echo "test: remove is registry-scoped"
 [ ! -e "$DEST/skill-b" ] && pass "skill-b removed" || fail "skill-b not removed"
 [ -f "$DEST/skill-a/SKILL.md" ] && pass "skill-a left intact" || fail "skill-a should remain"
 
+echo "test: help uses the bare name, path only on the Location line"
+help_out="$("$SM" -h)"
+echo "$help_out" | grep -q '^Usage: skilla ' && pass "usage shows bare 'skilla'" || fail "usage shows a path"
+sm_dir="$(cd "$(dirname "$SM")" && pwd -P)"
+[ "$(echo "$help_out" | grep -c "$sm_dir")" -eq 1 ] \
+  && pass "script path appears exactly once (Location line)" || fail "path leaks beyond Location"
+echo "$help_out" | grep -q '^Location: ' && pass "Location line present" || fail "Location line missing"
+
+echo "test: --scope validation"
+"$SM" --scope banana list >/dev/null 2>&1 && fail "--scope banana accepted" || pass "invalid scope rejected"
+
+echo "test: --scope user == -g (installs under \$HOME/.agents/skills)"
+FAKEHOME="$TMP/home"; mkdir -p "$FAKEHOME"
+HOME="$FAKEHOME" "$SM" add --scope user --skill skill-a "$CAT" >/dev/null 2>&1
+[ -f "$FAKEHOME/.agents/skills/skill-a/SKILL.md" ] \
+  && pass "--scope user installed to ~/.agents/skills" || fail "--scope user wrong destination"
+scope_out="$(HOME="$FAKEHOME" "$SM" list --scope user 2>/dev/null)"   # capture first: grep -q + pipefail = SIGPIPE race
+echo "$scope_out" | grep -q 'Installed skills (user)' \
+  && pass "list labels the scope 'user'" || fail "scope label"
+
 echo
 echo "ALL TESTS PASSED"

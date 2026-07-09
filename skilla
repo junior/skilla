@@ -6,7 +6,7 @@
 
 set -e
 
-SKILLA_VERSION="0.1.0"
+SKILLA_VERSION="0.2.0"
 
 # Default configuration
 GLOBAL_SKILLS_DIR="$HOME/.agents/skills"
@@ -506,8 +506,10 @@ list_skills() {
     init_skills_system
 
     local scope_text="project"
-    if [[ "$GLOBAL_FLAG" == true ]] || [[ -n "$CUSTOM_PATH" ]]; then
-        scope_text="global"
+    if [[ -n "$CUSTOM_PATH" ]]; then
+        scope_text="custom path"
+    elif [[ "$GLOBAL_FLAG" == true ]]; then
+        scope_text="user"
     fi
 
     echo -e "${BLUE}Installed skills ($scope_text):${NC}"
@@ -721,14 +723,19 @@ verify_artifact() {
 
 # Show usage
 show_usage() {
+    local self="${BASH_SOURCE[0]}"
+    local loc
+    loc="$(cd "$(dirname "$self")" 2>/dev/null && pwd -P)/$(basename "$self")"
     cat << EOF
 skilla - Manage Agent Skills from git repositories
 Compliant with https://agentskills.io/ specification
 
-Usage: $0 <command> [options] [arguments]
+Usage: skilla <command> [options] [arguments]
 
 Global Options:
-    -g, --global          Use global skills directory (~/.agents/skills/)
+    --scope <user|project>  Where skills live: 'project' = ./.agents/skills/ (default),
+                            'user' = ~/.agents/skills/
+    -g, --global          Shorthand for --scope user
     --path <folder>       Use custom skills directory
     -y, --yes             Auto-confirm prompts (e.g., for remove)
     --check               Only check for updates, don't apply them
@@ -748,22 +755,23 @@ Commands:
     version               Print the skilla version (also -v, --version)
 
 Examples:
-    $0 add <repository-url>
-    $0 add -g <repository-url>
-    $0 add --skill nginx-validation <repository-url>
-    $0 add --force <repository-url>
-    $0 update nginx-validation
-    $0 update -g
-    $0 update --check nginx-validation
-    $0 list
-    $0 ls -g
-    $0 info nginx-validation
-    $0 remove nginx-validation
-    $0 rm --all -y
+    skilla add <repository-url>
+    skilla add --scope user <repository-url>
+    skilla add --skill nginx-validation <repository-url>
+    skilla add --force <repository-url>
+    skilla update nginx-validation
+    skilla update -g
+    skilla update --check nginx-validation
+    skilla list
+    skilla ls --scope user
+    skilla info nginx-validation
+    skilla remove nginx-validation
+    skilla rm --all -y
 
 Notes:
-    - Without -g, installs to the project's .agents/skills/ (the path Devin indexes
-      for that repo); with -g, the user-global ~/.agents/skills/ (Devin Desktop).
+    - --scope project (the default) installs to the project's .agents/skills/ (the
+      path Devin indexes for that repo); --scope user (or -g) installs to the
+      user-global ~/.agents/skills/ (Devin Desktop).
     - Dependencies declared via 'requires:' in SKILL.md (or plugin.json
       'requiredSkills') are installed automatically from the same source.
     - Version is read from SKILL.md frontmatter 'version:' (plugin.json fallback),
@@ -771,6 +779,7 @@ Notes:
     - Only removes skills that are in the registry; ignores other files in the
       skills directory.
 
+Location: $loc
 EOF
 }
 
@@ -782,7 +791,15 @@ main() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            -g|--global) GLOBAL_FLAG=true; shift ;;
+            -g|--global) GLOBAL_FLAG=true; shift ;;   # shorthand for --scope user
+            --scope)
+                if [[ -z "${2:-}" ]]; then echo -e "${RED}Error: --scope requires 'user' or 'project'${NC}"; exit 1; fi
+                case "$2" in
+                    user)    GLOBAL_FLAG=true ;;
+                    project) GLOBAL_FLAG=false ;;
+                    *) echo -e "${RED}Error: invalid scope '$2' (use 'user' or 'project')${NC}"; exit 1 ;;
+                esac
+                shift 2 ;;
             --check)     CHECK_ONLY=true; shift ;;
             -y|--yes)    YES_FLAG=true; shift ;;
             --all)       ALL_FLAG=true; shift ;;

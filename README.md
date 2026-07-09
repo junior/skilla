@@ -18,16 +18,22 @@ in a small JSON registry so it can `list`, `update`, and `remove` cleanly.
 
 ## Install
 
-**Managed (recommended) — via [mise](https://mise.jdx.dev):**
+**Managed — [Homebrew](https://brew.sh) (macOS/Linux):**
 
 ```bash
-mise use -g 'github:junior/skilla[exe=skilla,matching=skilla]@0.1.0'
+brew install junior/tap/skilla
+```
+
+**Managed — [mise](https://mise.jdx.dev):**
+
+```bash
+mise use -g 'github:junior/skilla[exe=skilla,matching=skilla]@0.2.0'
 ```
 
 **Quick — fetch the single script onto your PATH:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/junior/skilla/v0.1.0/skilla \
+curl -fsSL https://raw.githubusercontent.com/junior/skilla/v0.2.0/skilla \
   -o ~/.local/bin/skilla && chmod +x ~/.local/bin/skilla
 ```
 
@@ -45,8 +51,9 @@ Commands:
   version              Print version (also -v, --version)
 
 Options:
-  -g, --global         Use ~/.agents/skills/ instead of ./.agents/skills/
-  --path <dir>         Install into a custom directory
+  --scope <user|project>  project = ./.agents/skills/ (default); user = ~/.agents/skills/
+  -g, --global         Shorthand for --scope user
+  --path <dir>         Install into a custom directory (e.g. .claude/skills)
   -s, --skill <name>   Install only one named skill from the repo
   --force              Reinstall even if present
   --check              Report actions without applying them
@@ -59,7 +66,7 @@ Options:
 ```bash
 skilla add git@github.com:acme/skills.git              # every skill in the repo
 skilla add git@github.com:acme/skills.git -s nginx     # one skill (+ its deps)
-skilla add -g git@github.com:acme/skills.git           # into ~/.agents/skills
+skilla add --scope user git@github.com:acme/skills.git # into ~/.agents/skills (-g works too)
 skilla list
 skilla info nginx
 skilla update nginx
@@ -85,9 +92,28 @@ skilla remove nginx
 
 | Scope | Skills dir | Registry |
 |-------|-----------|----------|
-| project (default) | `./.agents/skills/` | `./.agents/registry.json` |
-| global (`-g`) | `~/.agents/skills/` | `~/.agents/registry.json` |
+| `--scope project` (default) | `./.agents/skills/` | `./.agents/registry.json` |
+| `--scope user` (or `-g`) | `~/.agents/skills/` | `~/.agents/registry.json` |
 | custom (`--path DIR`) | `DIR` | `DIR/../registry.json` |
+
+## Use skilla from your AI CLI (the `skilla` skill)
+
+This repo also ships a **skill named `skilla`** (`skills/skilla/SKILL.md`,
+[agentskills.io](https://agentskills.io/specification) format) that teaches an AI CLI —
+Claude Code, Devin, Cursor, anything that reads agent skills — to install and manage
+skills **through skilla** instead of its vendor-specific mechanism. Install it once and
+"install the nginx skill from <repo>" just works inside the agent:
+
+```bash
+# for the current project (Devin indexes .agents/skills/):
+skilla add https://github.com/junior/skilla --skill skilla
+
+# user-wide:
+skilla add --scope user https://github.com/junior/skilla --skill skilla
+
+# for a Claude Code project (its skills dir):
+skilla add --path .claude/skills https://github.com/junior/skilla --skill skilla
+```
 
 ## Development
 
