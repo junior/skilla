@@ -5,3 +5,6 @@ Thumbs.db
 # scratch
 *.tmp
 /tmp-test/
+
+# local skill installs (this repo is a skill SOURCE; never track installs)
+.agents/
