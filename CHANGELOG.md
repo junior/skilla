@@ -5,6 +5,12 @@ All notable changes are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-10
+### Fixed
+- `verify` uses `--insecure-ignore-tlog=true`: internal-PKI bundles carry no public
+  transparency-log entry (signed with an empty-services signing config), and offline
+  verification must not require the public Sigstore TUF/Rekor infrastructure.
+
 ## [0.2.0] - 2026-07-08
 ### Added
 - `--scope <user|project>` — the explicit way to pick where skills live

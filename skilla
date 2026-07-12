@@ -6,7 +6,7 @@
 
 set -e
 
-SKILLA_VERSION="0.2.0"
+SKILLA_VERSION="0.2.1"
 
 # Default configuration
 GLOBAL_SKILLS_DIR="$HOME/.agents/skills"
@@ -713,7 +713,7 @@ verify_artifact() {
     [[ -f "$key" ]] || { echo -e "${RED}trust key not found: $key (pass --key or set SKILLA_TRUST_KEY)${NC}"; exit 1; }
 
     echo -e "${BLUE}Verifying $artifact against $key ...${NC}"
-    if cosign verify-blob --key "$key" --bundle "$bundle" "$artifact"; then
+    if cosign verify-blob --insecure-ignore-tlog=true --key "$key" --bundle "$bundle" "$artifact"; then
         echo -e "${GREEN}OK — signature is valid${NC}"
     else
         echo -e "${RED}FAILED — signature did not verify${NC}"

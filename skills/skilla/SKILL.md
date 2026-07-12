@@ -1,6 +1,6 @@
 ---
 name: skilla
-version: 0.2.0
+version: 0.2.1
 description: Install, update, list, verify, and remove agent skills (agentskills.io spec) using the skilla CLI. Use whenever the user asks to install, add, update, or remove an agent skill from a git repository or skill catalog — in any AI coding CLI (Claude Code, Devin, Cursor, ...) — instead of vendor-specific plugin commands.
 allowed-tools:
   - exec
