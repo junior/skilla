@@ -1,5 +1,13 @@
 # skilla
 
+[![CI](https://github.com/junior/skilla/actions/workflows/ci.yml/badge.svg)](https://github.com/junior/skilla/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/junior/skilla?logo=github)](https://github.com/junior/skilla/releases)
+[![Homebrew](https://img.shields.io/badge/homebrew-junior%2Ftap%2Fskilla-FBB040?logo=homebrew&logoColor=white)](https://github.com/junior/homebrew-tap)
+[![Agent Skills](https://img.shields.io/badge/Agent%20Skills-agentskills.io-0B7C84)](https://agentskills.io/specification)
+[![Made for AI agents](https://img.shields.io/badge/made%20for-AI%20agents%20%C2%B7%20Devin%20%C2%B7%20Claude%20%C2%B7%20Cursor-6f42c1)](#use-skilla-from-your-ai-cli-the-skilla-skill)
+[![Pure Bash](https://img.shields.io/badge/pure%20bash-no%20Node.js-4EAA25?logo=gnubash&logoColor=white)](https://github.com/junior/skilla)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A small, dependency-light CLI for installing [Agent Skills](https://agentskills.io/)
 from git repositories into the locations agents read them from.
 
@@ -27,13 +35,13 @@ brew install junior/tap/skilla
 **Managed — [mise](https://mise.jdx.dev):**
 
 ```bash
-mise use -g 'github:junior/skilla[exe=skilla,matching=skilla]@0.2.1'
+mise use -g 'github:junior/skilla[exe=skilla,matching=skilla]@0.3.0'
 ```
 
 **Quick — fetch the single script onto your PATH:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/junior/skilla/v0.2.1/skilla \
+curl -fsSL https://raw.githubusercontent.com/junior/skilla/v0.3.0/skilla \
   -o ~/.local/bin/skilla && chmod +x ~/.local/bin/skilla
 ```
 
@@ -44,6 +52,7 @@ skilla <command> [options] [arguments]
 
 Commands:
   add <git-url>        Install skills from a repo (with --force to reinstall)
+  repo ls <git-url>    List a repo's skills (name · version · description) — no install
   update [skill]       Update one skill, or all if omitted
   list, ls             List installed skills + versions
   info <skill>         Show a skill's details + declared dependencies
@@ -64,6 +73,7 @@ Options:
 ### Examples
 
 ```bash
+skilla repo ls https://github.com/microsoft/azure-skills   # browse before installing
 skilla add git@github.com:acme/skills.git              # every skill in the repo
 skilla add git@github.com:acme/skills.git -s nginx     # one skill (+ its deps)
 skilla add --scope user git@github.com:acme/skills.git # into ~/.agents/skills (-g works too)
@@ -87,6 +97,9 @@ skilla remove nginx
   touch skills this tool installed.
 - **No code runs at install time** — it clones and copies; a skill's own scripts only run
   later when an agent uses it.
+- **Fast on big catalogs** — `add --skill`, `update`, and `repo ls` use partial + sparse
+  clones (only the needed skill's files download; dependencies materialize on demand),
+  falling back to a plain shallow clone when the server/git can't do it.
 
 ## Scopes
 

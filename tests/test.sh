@@ -87,5 +87,12 @@ scope_out="$(HOME="$FAKEHOME" "$SM" list --scope user 2>/dev/null)"   # capture 
 echo "$scope_out" | grep -q 'Installed skills (user)' \
   && pass "list labels the scope 'user'" || fail "scope label"
 
+echo "test: repo ls lists skills with descriptions (no install)"
+ls_out="$("$SM" repo ls "$CAT" 2>/dev/null)"
+echo "$ls_out" | grep -q 'skill-a' && echo "$ls_out" | grep -q 'Fixture skill A.' \
+  && pass "repo ls shows name + description" || { echo "$ls_out"; fail "repo ls output"; }
+echo "$ls_out" | grep -q 'skill-b' && pass "repo ls lists every skill" || fail "repo ls missing skill-b"
+echo "$ls_out" | grep -q '1.2.3' && pass "repo ls shows versions" || fail "repo ls missing version"
+
 echo
 echo "ALL TESTS PASSED"

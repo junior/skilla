@@ -5,6 +5,16 @@ All notable changes are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-10
+### Added
+- `skilla repo ls <source>` — list a repository's skills (name · version · description)
+  without installing anything.
+- Partial + sparse clones: `add --skill`, `update`, and `repo ls` download only the
+  needed skill's files (dependencies materialize on demand; automatic fallback to a
+  plain shallow clone), so big catalogs like microsoft/azure-skills or nvidia/skills
+  don't cost a full checkout.
+- README badges (CI · release · homebrew · agentskills.io · AI-agents · pure-bash · MIT).
+
 ## [0.2.1] - 2026-07-10
 ### Fixed
 - `verify` uses `--insecure-ignore-tlog=true`: internal-PKI bundles carry no public
