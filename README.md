@@ -6,6 +6,8 @@
 [![Agent Skills](https://img.shields.io/badge/Agent%20Skills-agentskills.io-0B7C84)](https://agentskills.io/specification)
 [![Made for AI agents](https://img.shields.io/badge/made%20for-AI%20agents%20%C2%B7%20Devin%20%C2%B7%20Claude%20%C2%B7%20Cursor-6f42c1)](#use-skilla-from-your-ai-cli-the-skilla-skill)
 [![Pure Bash](https://img.shields.io/badge/pure%20bash-no%20Node.js-4EAA25?logo=gnubash&logoColor=white)](https://github.com/junior/skilla)
+[![ShellCheck](https://img.shields.io/badge/shellcheck-passing-brightgreen?logo=gnu-bash)](https://www.shellcheck.net/)
+[![POSIX](https://img.shields.io/badge/POSIX-compliant-green?logo=linux)](https://pubs.opengroup.org/onlinepubs/9699919799/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A small, dependency-light CLI for installing [Agent Skills](https://agentskills.io/)
