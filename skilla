@@ -1,12 +1,20 @@
 #!/bin/bash
 
 # skilla
-# A script to manage Agent Skills from git repositories
-# Compliant with https://agentskills.io/ specification
+# A script to manage Agent Skills and Agent Plugins from git repositories
+# Skills:  https://agentskills.io/specification
+# Plugins: https://agent-plugins.org/specification (Agent Plugins 1.0.0)
 
 set -e
 
-SKILLA_VERSION="0.3.0"
+SKILLA_VERSION="0.4.0"
+
+# Agent Plugins: the only spec version this client supports. Per the conformance
+# rules the manifest rules are selected locally from `$schema` — the schema is
+# never fetched at load time.
+AGENT_PLUGINS_VERSION="1.0.0"
+PLUGIN_SCHEMA_URL="https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
+MCP_SCHEMA_URL="https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"
 
 # Default configuration
 GLOBAL_SKILLS_DIR="$HOME/.agents/skills"
@@ -54,6 +62,50 @@ get_registry_file() {
     else
         echo "$PROJECT_REGISTRY"
     fi
+}
+
+# --- Agent Plugins locations -------------------------------------------------
+# An installed plugin keeps its package tree intact (so ${PLUGIN_ROOT} in its
+# mcp.json stays meaningful) under <agents-dir>/plugins/<name>/, and gets a
+# persistent <agents-dir>/plugin-data/<name>/ that survives updates.
+
+# The directory holding .agents/ for the current scope (parent of the registry).
+get_agents_dir() {
+    local registry_file
+    registry_file=$(get_registry_file)
+    dirname "$registry_file"
+}
+
+get_plugins_dir() {
+    echo "$(get_agents_dir)/plugins"
+}
+
+get_plugin_registry_file() {
+    echo "$(get_agents_dir)/plugins.json"
+}
+
+# Absolute, symlink-resolved path — the spec requires PLUGIN_ROOT and PLUGIN_DATA
+# to be absolute, and the project scope's paths are relative to the cwd.
+_abspath() {
+    local p="$1" d b
+    if [[ -d "$p" ]]; then (cd "$p" && pwd -P); return 0; fi
+    d=$(dirname "$p"); b=$(basename "$p")
+    if [[ -d "$d" ]]; then
+        echo "$(cd "$d" && pwd -P)/$b"
+    else
+        case "$p" in
+            /*) echo "$p" ;;
+            *)  echo "$PWD/${p#./}" ;;
+        esac
+    fi
+}
+
+plugin_root_for() {
+    _abspath "$(get_plugins_dir)/$1"
+}
+
+plugin_data_for() {
+    _abspath "$(get_agents_dir)/plugin-data/$1"
 }
 
 # Initialize skills system
@@ -139,17 +191,43 @@ get_remote_commit() {
     fi
 }
 
-# Extract version: SKILL.md frontmatter is the source of truth (agentskills.io);
-# fall back to plugin.json (the optional devin-plugins manifest).
+# Read one key out of the SKILL.md `metadata:` block. agentskills.io defines
+# `metadata` as a map of string keys to string values and it is where non-spec
+# properties (notably `version`) belong — there is no top-level `version:` field.
+extract_metadata_field() {
+    local skill_path="$1" key="$2"
+    local skill_file="$skill_path/SKILL.md"
+    [[ -f "$skill_file" ]] || return 0
+    sed -n '/^---$/,/^---$/p' "$skill_file" | awk -v key="$key" '
+        /^metadata:[[:space:]]*$/ { inblock=1; next }
+        inblock && /^[^[:space:]#]/ { inblock=0 }
+        inblock {
+            if (match($0, "^[[:space:]]+" key ":[[:space:]]*")) {
+                v = substr($0, RSTART + RLENGTH)
+                sub(/[[:space:]]+$/, "", v)
+                gsub(/^["'"'"']|["'"'"']$/, "", v)
+                if (v != "") { print v; exit }
+            }
+        }
+    '
+}
+
+# Extract version, spec-preferred order:
+#   1. SKILL.md `metadata.version`  (agentskills.io: the conformant location)
+#   2. SKILL.md top-level `version:` (legacy; not a spec field, still in the wild)
+#   3. plugin.json `.version`        (Agent Plugins manifest, when the skill ships in one)
 extract_skill_version() {
     local skill_path="$1"
     local skill_file="$skill_path/SKILL.md"
     local version=""
 
     if [[ -f "$skill_file" ]]; then
-        version=$(sed -n '/^---$/,/^---$/p' "$skill_file" \
-            | grep -E '^[[:space:]]*version:' | head -1 \
-            | sed -E 's/^[[:space:]]*version:[[:space:]]*//' | tr -d '"'"'"' ')
+        version=$(extract_metadata_field "$skill_path" "version")
+        if [[ -z "$version" ]]; then
+            version=$(sed -n '/^---$/,/^---$/p' "$skill_file" \
+                | grep -E '^[[:space:]]*version:' | head -1 \
+                | sed -E 's/^[[:space:]]*version:[[:space:]]*//' | tr -d '"'"'"' ')
+        fi
     fi
     if [[ -z "$version" && -f "$skill_path/plugin.json" ]]; then
         version=$(jq -r '.version // empty' "$skill_path/plugin.json" 2>/dev/null)
@@ -157,14 +235,18 @@ extract_skill_version() {
     echo "$version"
 }
 
-# Extract a skill's dependencies: frontmatter `requires` (block or inline list),
-# falling back to plugin.json `requiredSkills`. Prints one skill name per line.
+# Extract a skill's dependencies. `requires` is a skilla extension, not an
+# agentskills.io field, so it is read from three places in order: the spec-safe
+# `metadata.requires` string ("a, b"), a top-level `requires` list, then
+# plugin.json `requiredSkills`. Prints one skill name per line.
 get_skill_requires() {
     local skill_dir="$1"
     local skill_file="$skill_dir/SKILL.md"
     local reqs=""
 
-    if [[ -f "$skill_file" ]]; then
+    reqs=$(extract_metadata_field "$skill_dir" "requires" | tr ',' ' ' | tr ' ' '\n' | grep -v '^$' || true)
+
+    if [[ -z "$reqs" && -f "$skill_file" ]]; then
         reqs=$(sed -n '/^---$/,/^---$/p' "$skill_file" | awk '
             /^requires:[[:space:]]*\[/ {
                 line=$0; sub(/^requires:[[:space:]]*\[/,"",line); sub(/\].*$/,"",line);
@@ -181,7 +263,10 @@ get_skill_requires() {
         ')
     fi
     if [[ -z "$reqs" && -f "$skill_dir/plugin.json" ]]; then
-        reqs=$(jq -r '.requiredSkills[]? // empty' "$skill_dir/plugin.json" 2>/dev/null)
+        # `extensions["dev.skilla"]` is the Agent Plugins-conformant home for
+        # this; a bare top-level `requiredSkills` is the pre-1.0.0 form.
+        reqs=$(jq -r '(.extensions["dev.skilla"].requiredSkills? // .requiredSkills? // [])[]? // empty' \
+            "$skill_dir/plugin.json" 2>/dev/null)
     fi
     echo "$reqs"
 }
@@ -342,6 +427,25 @@ add_skill() {
         echo -e "${RED}Failed to clone repository${NC}"
         rm -rf "$temp_dir"
         return 1
+    fi
+
+    # An Agent Plugins package puts its skills at the same skills/<name>/SKILL.md
+    # location, so installing them here is correct — but the package's manifest,
+    # MCP config and extension dirs are dropped. Say so, and validate the parts
+    # that affect the skills we are about to copy.
+    if [[ -f "$temp_dir/plugin.json" ]] && is_agent_plugin "$temp_dir"; then
+        local pname pver
+        pname=$(plugin_field "$temp_dir" name)
+        pver=$(plugin_field "$temp_dir" version)
+        echo -e "${BLUE}Source is an Agent Plugin: ${pname} ${pver:+($pver) }[Agent Plugins $AGENT_PLUGINS_VERSION]${NC}"
+        _v_reset
+        if ! validate_plugin_manifest "$temp_dir"; then
+            echo -e "${RED}plugin.json is fatally invalid — refusing to install from a rejected plugin${NC}"
+            echo "Run 'skilla plugin validate' on the source to see the details."
+            rm -rf "$temp_dir"
+            return 1
+        fi
+        echo -e "${YELLOW}Installing its skills only — 'skilla plugin add $source' installs the whole package${NC}"
     fi
 
     local skills_root="$temp_dir/skills"
@@ -823,14 +927,946 @@ verify_artifact() {
     fi
 }
 
+# =============================================================================
+# Agent Plugins 1.0.0 — https://agent-plugins.org/specification
+#
+# A plugin is a directory with a required plugin.json manifest and components in
+# fixed locations: skills/<name>/SKILL.md and mcp.json. Client-specific data
+# lives under reverse-domain namespaces (manifest `extensions`, or a top-level
+# com.example.client/ directory) and is ignored here by design.
+#
+# Failure boundaries follow the spec: unknown top-level manifest fields and a
+# non-object `extensions` are reported but non-fatal; every other manifest
+# violation is fatal for the whole plugin; an invalid mcp.json disables MCP only;
+# an invalid single server entry or skill is skipped, and the rest still loads.
+# =============================================================================
+
+V_ERRORS=0
+V_WARNINGS=0
+V_MCP_ERRORS=0
+
+_v_reset() { V_ERRORS=0; V_WARNINGS=0; V_MCP_ERRORS=0; }
+_v_err()   { echo -e "  ${RED}error${NC}  $1"; V_ERRORS=$((V_ERRORS + 1)); }
+_v_mcp()   { echo -e "  ${RED}error${NC}  $1"; V_MCP_ERRORS=$((V_MCP_ERRORS + 1)); }
+_v_warn()  { echo -e "  ${YELLOW}warn${NC}   $1"; V_WARNINGS=$((V_WARNINGS + 1)); }
+_v_note()  { echo -e "  ${GREEN}ok${NC}     $1"; }
+
+# Manifest `name`: 1-64 chars of [a-z0-9.-], alphanumeric at both ends, and no
+# `--` or `..` runs (the latter also keeps a name from escaping a path segment).
+validate_plugin_name() {
+    local name="$1" rc=0
+    if [[ ${#name} -lt 1 || ${#name} -gt 64 ]]; then
+        _v_err "plugin.json: 'name' must be 1-64 characters (got ${#name})"; rc=1
+    fi
+    if [[ ! "$name" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
+        _v_err "plugin.json: 'name' must use [a-z0-9.-] and start/end with an alphanumeric: '$name'"; rc=1
+    fi
+    if [[ "$name" == *--* ]]; then
+        _v_err "plugin.json: 'name' must not contain '--': '$name'"; rc=1
+    fi
+    if [[ "$name" == *..* ]]; then
+        _v_err "plugin.json: 'name' must not contain '..': '$name'"; rc=1
+    fi
+    return $rc
+}
+
+# A plugin-relative path must stay inside the package: no '..' segment, no
+# absolute path, no leading '~'.
+_path_escapes_root() {
+    local p="$1"
+    [[ "$p" == /* || "$p" == "~"* ]] && return 0
+    [[ "$p" == ".." || "$p" == "../"* || "$p" == */../* || "$p" == */.. ]] && return 0
+    return 1
+}
+
+# Does this directory declare itself an Agent Plugin we can load?
+is_agent_plugin() {
+    local dir="$1"
+    [[ -f "$dir/plugin.json" ]] || return 1
+    local schema
+    schema=$(jq -r '."$schema" // empty' "$dir/plugin.json" 2>/dev/null) || return 1
+    [[ "$schema" == "$PLUGIN_SCHEMA_URL" ]]
+}
+
+# Read a manifest string field (empty when absent).
+plugin_field() {
+    jq -r --arg f "$2" '.[$f] // empty' "$1/plugin.json" 2>/dev/null || true
+}
+
+# Validate plugin.json. Returns non-zero on a fatal violation (plugin rejected).
+validate_plugin_manifest() {
+    local dir="$1" manifest="$1/plugin.json"
+    local before=$V_ERRORS
+
+    if [[ ! -f "$manifest" ]]; then
+        _v_err "no plugin.json in $dir — not an Agent Plugin"
+        return 1
+    fi
+    if ! jq -e 'type == "object"' "$manifest" >/dev/null 2>&1; then
+        _v_err "plugin.json is not a JSON object (or is not valid JSON)"
+        return 1
+    fi
+
+    local schema
+    schema=$(jq -r '."$schema" // empty' "$manifest")
+    if [[ -z "$schema" ]]; then
+        _v_err "plugin.json: required field '\$schema' is missing"
+    elif [[ "$schema" != "$PLUGIN_SCHEMA_URL" ]]; then
+        _v_err "plugin.json: '\$schema' targets an Agent Plugins version this client does not support"
+        _v_err "  found:    $schema"
+        _v_err "  supported: $PLUGIN_SCHEMA_URL"
+    fi
+
+    local name
+    name=$(jq -r 'if has("name") then (.name | tostring) else "" end' "$manifest")
+    if ! jq -e 'has("name")' "$manifest" >/dev/null; then
+        _v_err "plugin.json: required field 'name' is missing"
+    elif [[ "$(jq -r '.name | type' "$manifest")" != "string" ]]; then
+        _v_err "plugin.json: 'name' must be a string"
+    else
+        validate_plugin_name "$name" || true
+    fi
+
+    # Optional string-typed fields.
+    local f t
+    for f in version description homepage repository license; do
+        t=$(jq -r --arg f "$f" '.[$f] | type' "$manifest")
+        if [[ "$t" != "null" && "$t" != "string" ]]; then
+            _v_err "plugin.json: '$f' must be a string (got $t)"
+        fi
+    done
+
+    # keywords: string[]
+    t=$(jq -r '.keywords | type' "$manifest")
+    if [[ "$t" != "null" ]]; then
+        if [[ "$t" != "array" ]]; then
+            _v_err "plugin.json: 'keywords' must be an array of strings (got $t)"
+        elif ! jq -e '[.keywords[] | type == "string"] | all' "$manifest" >/dev/null; then
+            _v_err "plugin.json: 'keywords' must contain only strings"
+        fi
+    fi
+
+    # author: object closed to {name,email,url}, all strings.
+    t=$(jq -r '.author | type' "$manifest")
+    if [[ "$t" != "null" ]]; then
+        if [[ "$t" != "object" ]]; then
+            _v_err "plugin.json: 'author' must be an object (got $t)"
+        else
+            local extra
+            extra=$(jq -r '.author | keys_unsorted[] | select(. != "name" and . != "email" and . != "url")' "$manifest" | tr '\n' ' ')
+            [[ -n "${extra// /}" ]] && _v_err "plugin.json: 'author' has fields outside {name,email,url}: ${extra% }"
+            if ! jq -e '[.author[] | type == "string"] | all' "$manifest" >/dev/null; then
+                _v_err "plugin.json: 'author' values must be strings"
+            fi
+        fi
+    fi
+
+    # extensions: a non-object value is ignored, non-fatally.
+    t=$(jq -r '.extensions | type' "$manifest")
+    if [[ "$t" != "null" ]]; then
+        if [[ "$t" != "object" ]]; then
+            _v_warn "plugin.json: 'extensions' is not an object — ignored"
+        else
+            if ! jq -e '[.extensions[] | type == "object"] | all' "$manifest" >/dev/null; then
+                _v_err "plugin.json: every 'extensions' namespace value must be an object"
+            fi
+            local ns
+            while IFS= read -r ns; do
+                [[ -z "$ns" ]] && continue
+                if [[ "$ns" != *.* ]]; then
+                    _v_warn "plugin.json: extension namespace '$ns' is not reverse-domain (e.g. com.example.client)"
+                fi
+            done < <(jq -r '.extensions | keys_unsorted[]' "$manifest")
+        fi
+    fi
+
+    # Unknown top-level fields are reported but do not stop the plugin loading.
+    local unknown
+    unknown=$(jq -r 'keys_unsorted[] | select(
+        . != "$schema" and . != "name" and . != "version" and . != "description" and
+        . != "author" and . != "homepage" and . != "repository" and . != "license" and
+        . != "keywords" and . != "extensions")' "$manifest" | tr '\n' ' ')
+    if [[ -n "${unknown// /}" ]]; then
+        _v_warn "plugin.json: unknown top-level field(s) ignored: ${unknown% }"
+        case " $unknown " in
+            *" requiredSkills "*)
+                _v_warn "  'requiredSkills' is not an Agent Plugins field — put it under extensions.<your.namespace>" ;;
+        esac
+    fi
+
+    [[ $V_ERRORS -eq $before ]]
+}
+
+# Validate an http/https MCP endpoint URL.
+_validate_mcp_url() {
+    local url="$1" srv="$2"
+    if [[ ! "$url" =~ ^https?:// ]]; then
+        _v_mcp "mcp.json: server '$srv': 'url' must be an absolute http/https URL"
+        return 1
+    fi
+    [[ "$url" == *"#"* ]] && _v_mcp "mcp.json: server '$srv': 'url' must not contain a fragment"
+
+    local rest="${url#*://}" hostport
+    hostport="${rest%%/*}"; hostport="${hostport%%\?*}"
+    if [[ "$hostport" == *@* ]]; then
+        _v_mcp "mcp.json: server '$srv': 'url' must not contain user info"
+        hostport="${hostport##*@}"
+    fi
+
+    local host="${hostport%%:*}"
+    if [[ "$hostport" == \[*\]* ]]; then host="${hostport%%\]*}"; fi
+    host="${host#"["}"; host="${host%"]"}"
+
+    local loopback=false
+    case "$host" in
+        localhost|127.*|::1|0:0:0:0:0:0:0:1) loopback=true ;;
+    esac
+    if [[ "$url" == http://* && "$loopback" != true ]]; then
+        _v_mcp "mcp.json: server '$srv': plain http is only allowed for loopback hosts (got '$host')"
+    fi
+    return 0
+}
+
+# Validate a single mcpServers entry. Non-zero => skip this server, keep the rest.
+_validate_mcp_server() {
+    local mcp="$1" srv="$2"
+    local before=$V_MCP_ERRORS
+    local type
+    type=$(jq -r --arg s "$srv" '.mcpServers[$s].type // empty' "$mcp")
+
+    case "$type" in
+        stdio)
+            local extra
+            extra=$(jq -r --arg s "$srv" '.mcpServers[$s] | keys_unsorted[] | select(
+                . != "type" and . != "command" and . != "args" and . != "env" and . != "cwd")' "$mcp" | tr '\n' ' ')
+            [[ -n "${extra// /}" ]] && _v_mcp "mcp.json: server '$srv': unsupported field(s) for stdio: ${extra% }"
+
+            local command
+            command=$(jq -r --arg s "$srv" '.mcpServers[$s].command // empty' "$mcp")
+            if [[ -z "$command" ]]; then
+                _v_mcp "mcp.json: server '$srv': stdio requires a non-empty 'command'"
+            else
+                # A single executable token: a bare name or a './' plugin-relative path.
+                if [[ "$command" == *" "* ]]; then
+                    _v_mcp "mcp.json: server '$srv': 'command' must be one executable token (move arguments into 'args')"
+                fi
+                # shellcheck disable=SC2016  # matching the literal placeholder text, not expanding it
+                if [[ "$command" == *'${PLUGIN_ROOT}'* || "$command" == *'${PLUGIN_DATA}'* ]]; then
+                    _v_mcp "mcp.json: server '$srv': placeholders are not expanded in 'command'"
+                fi
+                if [[ "$command" == /* ]]; then
+                    _v_mcp "mcp.json: server '$srv': 'command' must be a bare name or a './' plugin-relative path"
+                elif [[ "$command" == ./* ]] && _path_escapes_root "$command"; then
+                    _v_mcp "mcp.json: server '$srv': 'command' escapes the plugin root"
+                fi
+            fi
+
+            local t
+            t=$(jq -r --arg s "$srv" '.mcpServers[$s].args | type' "$mcp")
+            if [[ "$t" != "null" ]]; then
+                if [[ "$t" != "array" ]]; then
+                    _v_mcp "mcp.json: server '$srv': 'args' must be an array of strings"
+                elif ! jq -e --arg s "$srv" '[.mcpServers[$s].args[] | type == "string"] | all' "$mcp" >/dev/null; then
+                    _v_mcp "mcp.json: server '$srv': 'args' must contain only strings"
+                fi
+            fi
+
+            t=$(jq -r --arg s "$srv" '.mcpServers[$s].env | type' "$mcp")
+            if [[ "$t" != "null" ]]; then
+                if [[ "$t" != "object" ]]; then
+                    _v_mcp "mcp.json: server '$srv': 'env' must be an object"
+                else
+                    if ! jq -e --arg s "$srv" '[.mcpServers[$s].env[] | type == "string"] | all' "$mcp" >/dev/null; then
+                        _v_mcp "mcp.json: server '$srv': 'env' values must be strings"
+                    fi
+                    local reserved
+                    reserved=$(jq -r --arg s "$srv" '.mcpServers[$s].env | keys_unsorted[] | select(. == "PLUGIN_ROOT" or . == "PLUGIN_DATA")' "$mcp" | tr '\n' ' ')
+                    [[ -n "${reserved// /}" ]] && _v_mcp "mcp.json: server '$srv': 'env' must not set reserved ${reserved% } (the client sets these)"
+                fi
+            fi
+
+            local cwd
+            cwd=$(jq -r --arg s "$srv" '.mcpServers[$s].cwd // empty' "$mcp")
+            if [[ -n "$cwd" ]]; then
+                # shellcheck disable=SC2016  # matching the literal placeholder text, not expanding it
+                case "$cwd" in
+                    ./*|'${PLUGIN_ROOT}'|'${PLUGIN_ROOT}/'*|'${PLUGIN_DATA}'|'${PLUGIN_DATA}/'*) ;;
+                    *) _v_mcp "mcp.json: server '$srv': 'cwd' must be './…', \${PLUGIN_ROOT}[/…] or \${PLUGIN_DATA}[/…]" ;;
+                esac
+                if _path_escapes_root "${cwd#\$\{PLUGIN_ROOT\}/}"; then
+                    _v_mcp "mcp.json: server '$srv': 'cwd' escapes its containment boundary"
+                fi
+            fi
+            ;;
+        streamable-http|sse)
+            local extra
+            extra=$(jq -r --arg s "$srv" '.mcpServers[$s] | keys_unsorted[] | select(
+                . != "type" and . != "url" and . != "headers")' "$mcp" | tr '\n' ' ')
+            [[ -n "${extra// /}" ]] && _v_mcp "mcp.json: server '$srv': unsupported field(s) for $type: ${extra% }"
+
+            local url
+            url=$(jq -r --arg s "$srv" '.mcpServers[$s].url // empty' "$mcp")
+            if [[ -z "$url" ]]; then
+                _v_mcp "mcp.json: server '$srv': $type requires a 'url'"
+            else
+                _validate_mcp_url "$url" "$srv" || true
+            fi
+
+            local t
+            t=$(jq -r --arg s "$srv" '.mcpServers[$s].headers | type' "$mcp")
+            if [[ "$t" != "null" ]]; then
+                if [[ "$t" != "object" ]]; then
+                    _v_mcp "mcp.json: server '$srv': 'headers' must be an object"
+                else
+                    if ! jq -e --arg s "$srv" '[.mcpServers[$s].headers[] | type == "string"] | all' "$mcp" >/dev/null; then
+                        _v_mcp "mcp.json: server '$srv': 'headers' values must be strings"
+                    fi
+                    # Header names are case-insensitive: duplicates are not allowed.
+                    local dupes
+                    dupes=$(jq -r --arg s "$srv" '.mcpServers[$s].headers | keys_unsorted | map(ascii_downcase) | group_by(.) | map(select(length > 1) | .[0]) | .[]' "$mcp" | tr '\n' ' ')
+                    [[ -n "${dupes// /}" ]] && _v_mcp "mcp.json: server '$srv': duplicate header name(s) ignoring case: ${dupes% }"
+                fi
+            fi
+            if [[ "$type" == "sse" ]]; then
+                _v_warn "mcp.json: server '$srv' uses the deprecated HTTP+SSE transport (MCP 2024-11-05)"
+            fi
+            ;;
+        "")
+            _v_mcp "mcp.json: server '$srv': missing 'type'"
+            ;;
+        *)
+            _v_mcp "mcp.json: server '$srv': unsupported transport '$type' — server skipped"
+            ;;
+    esac
+
+    [[ $V_MCP_ERRORS -eq $before ]]
+}
+
+# Validate mcp.json. Returns non-zero when MCP must be disabled for the plugin
+# (missing mcp.json is a valid absence and returns 0).
+validate_mcp_config() {
+    local dir="$1" mcp="$1/mcp.json"
+    [[ -f "$mcp" ]] || return 0
+    local before=$V_MCP_ERRORS
+
+    if ! jq -e 'type == "object"' "$mcp" >/dev/null 2>&1; then
+        _v_mcp "mcp.json is not a JSON object (or is not valid JSON) — MCP disabled"
+        return 1
+    fi
+
+    # plugin.json and mcp.json must target the same Agent Plugins version, and
+    # that version must be the one this client supports.
+    local schema
+    schema=$(jq -r '."$schema" // empty' "$mcp")
+    if [[ "$schema" != "$MCP_SCHEMA_URL" ]]; then
+        _v_mcp "mcp.json: '\$schema' must be $MCP_SCHEMA_URL (found: ${schema:-<missing>}) — MCP disabled"
+    fi
+
+    if ! jq -e 'has("mcpServers")' "$mcp" >/dev/null; then
+        _v_mcp "mcp.json: required field 'mcpServers' is missing — MCP disabled"
+    elif [[ "$(jq -r '.mcpServers | type' "$mcp")" != "object" ]]; then
+        _v_mcp "mcp.json: 'mcpServers' must be an object — MCP disabled"
+    fi
+
+    local extra
+    extra=$(jq -r 'keys_unsorted[] | select(. != "$schema" and . != "mcpServers")' "$mcp" | tr '\n' ' ')
+    [[ -n "${extra// /}" ]] && _v_mcp "mcp.json: unsupported top-level field(s): ${extra% } — MCP disabled"
+
+    if [[ $V_MCP_ERRORS -ne $before ]]; then
+        return 1
+    fi
+
+    local srv
+    while IFS= read -r srv; do
+        [[ -z "$srv" ]] && continue
+        _validate_mcp_server "$mcp" "$srv" || true
+    done < <(jq -r '.mcpServers | keys_unsorted[]' "$mcp")
+
+    return 0
+}
+
+# Validate the skills/ component against agentskills.io. A non-conformant skill
+# is skipped; the rest of the plugin still loads.
+validate_plugin_skills() {
+    local dir="$1"
+    [[ -d "$dir/skills" ]] || return 0     # a missing component location is valid absence
+
+    local d base name desc
+    for d in "$dir"/skills/*/; do
+        [[ -d "$d" ]] || continue
+        base=$(basename "$d")
+        if [[ ! -f "${d}SKILL.md" ]]; then
+            _v_warn "skills/$base: no SKILL.md — not a skill, skipped"
+            continue
+        fi
+        name=$(extract_frontmatter_field "$d" "name")
+        desc=$(extract_frontmatter_field "$d" "description")
+        if [[ -z "$name" ]]; then
+            _v_warn "skills/$base: SKILL.md frontmatter has no 'name' — skill skipped"
+        else
+            [[ "$name" != "$base" ]] && _v_warn "skills/$base: frontmatter name '$name' must match the directory name"
+            if [[ ! "$name" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || [[ "$name" == *--* ]] || [[ ${#name} -gt 64 ]]; then
+                _v_warn "skills/$base: 'name' must be 1-64 chars of [a-z0-9-], no leading/trailing/double hyphen"
+            fi
+        fi
+        if [[ -z "$desc" ]]; then
+            _v_warn "skills/$base: SKILL.md frontmatter has no 'description' — skill skipped"
+        elif [[ ${#desc} -gt 1024 ]]; then
+            _v_warn "skills/$base: 'description' exceeds 1024 characters (${#desc})"
+        fi
+    done
+    return 0
+}
+
+# Count / list the skills a plugin provides.
+plugin_skill_names() {
+    local dir="$1" d
+    [[ -d "$dir/skills" ]] || return 0
+    for d in "$dir"/skills/*/; do
+        [[ -f "${d}SKILL.md" ]] && basename "$d"
+    done
+}
+
+# Expand ${PLUGIN_ROOT}/${PLUGIN_DATA} in a single non-recursive pass. Only ever
+# applied to args elements, env values and cwd — never to env keys or command.
+expand_plugin_placeholders() {
+    local s="$1" root="$2" data="$3"
+    s="${s//\$\{PLUGIN_ROOT\}/$root}"
+    s="${s//\$\{PLUGIN_DATA\}/$data}"
+    printf '%s' "$s"
+}
+
+# --- plugin subcommands ------------------------------------------------------
+
+# Print the manifest header shared by `plugin ls` and `plugin info`.
+_print_plugin_manifest() {
+    local dir="$1"
+    local name version desc license homepage repo author keywords
+    name=$(plugin_field "$dir" name)
+    version=$(plugin_field "$dir" version)
+    desc=$(plugin_field "$dir" description)
+    license=$(plugin_field "$dir" license)
+    homepage=$(plugin_field "$dir" homepage)
+    repo=$(plugin_field "$dir" repository)
+    author=$(jq -r '.author | if . == null then "" else [.name, .email, .url] | map(select(. != null)) | join(" · ") end' "$dir/plugin.json" 2>/dev/null || true)
+    keywords=$(jq -r '.keywords // [] | join(", ")' "$dir/plugin.json" 2>/dev/null || true)
+
+    echo "Name:        $name"
+    [[ -n "$version"  ]] && echo "Version:     $version"
+    [[ -n "$desc"     ]] && echo "Description: $desc"
+    [[ -n "$author"   ]] && echo "Author:      $author"
+    [[ -n "$license"  ]] && echo "License:     $license"
+    [[ -n "$homepage" ]] && echo "Homepage:    $homepage"
+    [[ -n "$repo"     ]] && echo "Repository:  $repo"
+    [[ -n "$keywords" ]] && echo "Keywords:    $keywords"
+    echo "Spec:        Agent Plugins $AGENT_PLUGINS_VERSION"
+    return 0
+}
+
+# Print the component inventory (skills, MCP servers, extension namespaces).
+_print_plugin_components() {
+    local dir="$1"
+
+    local names
+    names=$(plugin_skill_names "$dir")
+    echo ""
+    if [[ -n "$names" ]]; then
+        echo "Skills (skills/):"
+        local s ver desc
+        while IFS= read -r s; do
+            [[ -z "$s" ]] && continue
+            ver=$(extract_skill_version "$dir/skills/$s"); [[ -z "$ver" ]] && ver="-"
+            desc=$(extract_frontmatter_field "$dir/skills/$s" "description")
+            [[ ${#desc} -gt 60 ]] && desc="${desc:0:57}..."
+            printf "  %-24s %-10s %s\n" "$s" "$ver" "$desc"
+        done <<< "$names"
+    else
+        echo "Skills (skills/): none"
+    fi
+
+    echo ""
+    if [[ -f "$dir/mcp.json" ]]; then
+        echo "MCP servers (mcp.json):"
+        local srv type target
+        while IFS= read -r srv; do
+            [[ -z "$srv" ]] && continue
+            type=$(jq -r --arg s "$srv" '.mcpServers[$s].type // "?"' "$dir/mcp.json")
+            if [[ "$type" == "stdio" ]]; then
+                target=$(jq -r --arg s "$srv" '[.mcpServers[$s].command] + (.mcpServers[$s].args // []) | join(" ")' "$dir/mcp.json")
+            else
+                target=$(jq -r --arg s "$srv" '.mcpServers[$s].url // ""' "$dir/mcp.json")
+            fi
+            printf "  %-24s %-16s %s\n" "$srv" "$type" "$target"
+        done < <(jq -r '.mcpServers // {} | keys_unsorted[]' "$dir/mcp.json" 2>/dev/null)
+        echo ""
+        echo "  skilla does not run MCP servers — 'skilla plugin mcp <name>' prints this"
+        echo "  config with \${PLUGIN_ROOT}/\${PLUGIN_DATA} expanded, for your host's config."
+    else
+        echo "MCP servers (mcp.json): none"
+    fi
+
+    local ns
+    ns=$(jq -r '.extensions // {} | keys_unsorted | join(", ")' "$dir/plugin.json" 2>/dev/null || true)
+    local extdirs=() d
+    for d in "$dir"/*/; do
+        [[ -d "$d" ]] || continue
+        local b; b=$(basename "$d")
+        [[ "$b" == "skills" ]] && continue
+        [[ "$b" == *.* ]] && extdirs+=("$b")
+    done
+    if [[ -n "$ns" || ${#extdirs[@]} -gt 0 ]]; then
+        echo ""
+        echo "Client extensions (ignored by skilla):"
+        [[ -n "$ns" ]] && echo "  manifest namespaces: $ns"
+        [[ ${#extdirs[@]} -gt 0 ]] && echo "  directories:         ${extdirs[*]}"
+    fi
+    return 0
+}
+
+# Validate a plugin directory against Agent Plugins 1.0.0.
+cmd_plugin_validate() {
+    local dir="${1:-.}"
+    if [[ ! -d "$dir" ]]; then
+        echo -e "${RED}Not a directory: $dir${NC}"
+        return 1
+    fi
+
+    echo -e "${BLUE}Validating $dir against Agent Plugins $AGENT_PLUGINS_VERSION${NC}"
+    echo ""
+    _v_reset
+
+    local manifest_ok=true
+    validate_plugin_manifest "$dir" || manifest_ok=false
+
+    if [[ "$manifest_ok" == true ]]; then
+        _v_note "plugin.json conforms"
+    else
+        echo ""
+        echo -e "  ${YELLOW}a client would reject the plugin here, before discovering components;${NC}"
+        echo -e "  ${YELLOW}checking the rest anyway so you can fix everything in one pass${NC}"
+        echo ""
+    fi
+
+    validate_plugin_skills "$dir"
+    local mcp_ok=true
+    validate_mcp_config "$dir" || mcp_ok=false
+    if [[ -f "$dir/mcp.json" ]]; then
+        if [[ "$mcp_ok" == true && $V_MCP_ERRORS -eq 0 ]]; then
+            _v_note "mcp.json conforms"
+        else
+            _v_warn "mcp.json is invalid — a conformant client disables MCP and loads the rest"
+        fi
+    fi
+
+    echo ""
+    if [[ "$manifest_ok" != true ]]; then
+        echo -e "${RED}FAILED — the manifest is fatally invalid, so the whole plugin is rejected${NC}"
+        echo "$V_ERRORS error(s), $((V_MCP_ERRORS)) MCP error(s), $V_WARNINGS warning(s)"
+        return 1
+    fi
+    if [[ $V_ERRORS -gt 0 || $V_MCP_ERRORS -gt 0 ]]; then
+        echo -e "${YELLOW}$V_ERRORS error(s), $V_MCP_ERRORS MCP error(s), $V_WARNINGS warning(s)${NC}"
+        return 1
+    fi
+    echo -e "${GREEN}OK — conformant Agent Plugin ($V_WARNINGS warning(s))${NC}"
+    return 0
+}
+
+# Inspect a plugin at a git source without installing anything.
+cmd_plugin_ls() {
+    local source="$1"
+    if [[ -z "$source" ]]; then
+        echo -e "${RED}Error: plugin ls requires a source URL${NC}"
+        return 1
+    fi
+
+    local temp_dir
+    temp_dir=$(mktemp -d)
+    echo -e "${BLUE}Inspecting plugin: $source${NC}"
+    if ! clone_source "$source" "$temp_dir" "plugin.json" \
+            "/plugin.json" "/mcp.json" "/skills/*/SKILL.md"; then
+        echo -e "${RED}Failed to clone repository${NC}"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+
+    if [[ ! -f "$temp_dir/plugin.json" ]]; then
+        echo -e "${RED}No plugin.json at the source root — not an Agent Plugin${NC}"
+        echo "Use 'skilla repo ls $source' to browse it as a plain skills repository."
+        rm -rf "$temp_dir"
+        return 1
+    fi
+
+    echo ""
+    _print_plugin_manifest "$temp_dir"
+    _print_plugin_components "$temp_dir"
+    echo ""
+    echo "Install with: skilla plugin add $source"
+    rm -rf "$temp_dir"
+}
+
+# Registry of installed plugins (separate file so skill names can never collide
+# with plugin names).
+read_plugin_registry() {
+    local f; f=$(get_plugin_registry_file)
+    if [[ -f "$f" ]]; then cat "$f"; else echo '{}'; fi
+}
+
+save_plugin_info() {
+    local name="$1" info="$2" reg
+    reg=$(read_plugin_registry)
+    echo "$reg" | jq --arg n "$name" --argjson i "$info" '.[$n] = $i' > "$(get_plugin_registry_file)"
+}
+
+remove_plugin_from_registry() {
+    local name="$1" reg
+    reg=$(read_plugin_registry)
+    echo "$reg" | jq --arg n "$name" 'del(.[$n])' > "$(get_plugin_registry_file)"
+}
+
+get_plugin_info() {
+    read_plugin_registry | jq -r --arg n "$1" '.[$n] // empty'
+}
+
+# Resolve an installed plugin's PLUGIN_ROOT / PLUGIN_DATA into the two globals
+# below. The current scope's layout wins (a project can be cloned to another
+# path); the values recorded at install time are the fallback.
+PLUGIN_ROOT_PATH=""
+PLUGIN_DATA_PATH=""
+resolve_plugin_paths() {
+    local name="$1" info="$2" stored
+    PLUGIN_ROOT_PATH=$(plugin_root_for "$name")
+    PLUGIN_DATA_PATH=$(plugin_data_for "$name")
+    if [[ ! -d "$PLUGIN_ROOT_PATH" ]]; then
+        stored=$(echo "$info" | jq -r '.root // empty')
+        [[ -n "$stored" && -d "$stored" ]] && PLUGIN_ROOT_PATH="$stored"
+        stored=$(echo "$info" | jq -r '.data // empty')
+        [[ -n "$stored" ]] && PLUGIN_DATA_PATH="$stored"
+    fi
+    return 0
+}
+
+# Install an Agent Plugin: the package tree is kept intact under plugins/<name>/
+# (so ${PLUGIN_ROOT} resolves), its skills are also copied into the skills dir
+# where agents actually index them, and a persistent PLUGIN_DATA dir is created.
+cmd_plugin_add() {
+    local source="$1"
+    if [[ -z "$source" ]]; then
+        echo -e "${RED}Error: plugin add requires a source URL${NC}"
+        return 1
+    fi
+
+    init_skills_system
+    echo -e "${BLUE}Adding plugin from: $source${NC}"
+
+    local temp_dir
+    temp_dir=$(mktemp -d)
+    echo "Cloning repository..."
+    if ! clone_source "$source" "$temp_dir"; then
+        echo -e "${RED}Failed to clone repository${NC}"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+
+    if [[ ! -f "$temp_dir/plugin.json" ]]; then
+        echo -e "${RED}No plugin.json at the source root — not an Agent Plugin${NC}"
+        echo "Install it as a plain skills repository with: skilla add $source"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+
+    echo ""
+    _v_reset
+    if ! validate_plugin_manifest "$temp_dir"; then
+        echo ""
+        echo -e "${RED}Plugin rejected: plugin.json is fatally invalid${NC}"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    validate_plugin_skills "$temp_dir"
+    local mcp_enabled=true
+    validate_mcp_config "$temp_dir" || mcp_enabled=false
+    [[ $V_MCP_ERRORS -gt 0 ]] && mcp_enabled=false
+
+    local name
+    name=$(plugin_field "$temp_dir" name)
+    local version; version=$(plugin_field "$temp_dir" version)
+
+    if [[ "$CHECK_ONLY" == true ]]; then
+        echo ""
+        if [[ -n "$(get_plugin_info "$name")" ]]; then
+            echo -e "${YELLOW}'$name' is already installed (would reinstall with --force)${NC}"
+        else
+            echo -e "${GREEN}'$name' not installed (would install)${NC}"
+        fi
+        rm -rf "$temp_dir"
+        return 0
+    fi
+
+    if [[ -n "$(get_plugin_info "$name")" && "$FORCE_FLAG" != true ]]; then
+        echo -e "${YELLOW}Plugin '$name' is already installed — use 'plugin add --force' to reinstall${NC}"
+        rm -rf "$temp_dir"
+        return 0
+    fi
+
+    local plugins_dir root data
+    plugins_dir=$(get_plugins_dir)
+    mkdir -p "$plugins_dir" "$(get_agents_dir)/plugin-data/$name"
+    # PLUGIN_DATA must persist across updates — created above, never wiped here.
+    root=$(plugin_root_for "$name")
+    data=$(plugin_data_for "$name")
+
+    rm -rf "$root"
+    cp -r "$temp_dir" "$root"
+    rm -rf "$root/.git"
+
+    # Surface the plugin's skills where agents index them.
+    local skills_dir installed=() s
+    skills_dir=$(get_skills_dir)
+    while IFS= read -r s; do
+        [[ -z "$s" ]] && continue
+        # Skip skills the validator rejected outright (no name/description).
+        if [[ -z "$(extract_frontmatter_field "$root/skills/$s" "name")" ]] || \
+           [[ -z "$(extract_frontmatter_field "$root/skills/$s" "description")" ]]; then
+            echo -e "${YELLOW}  skipping non-conformant skill: $s${NC}"
+            continue
+        fi
+        rm -rf "${skills_dir:?}/$s"
+        cp -r "$root/skills/$s" "$skills_dir/$s"
+        installed+=("$s")
+
+        local sver sinfo
+        sver=$(extract_skill_version "$skills_dir/$s")
+        sinfo=$(jq -n --arg name "$s" --arg source "$source" \
+            --arg commit "$(get_git_commit "$temp_dir")" \
+            --arg remote_commit "$(get_remote_commit "$source")" \
+            --arg version "$sver" --arg plugin "$name" --arg installed_at "$(_now)" \
+            '{name:$name, source:$source, commit:$commit, remote_commit:$remote_commit,
+              version:$version, plugin:$plugin, installed_at:$installed_at, updated_at:$installed_at}')
+        save_skill_info "$s" "$sinfo"
+    done < <(plugin_skill_names "$root")
+
+    local info
+    info=$(jq -n --arg name "$name" --arg source "$source" --arg version "$version" \
+        --arg spec "$AGENT_PLUGINS_VERSION" --arg commit "$(get_git_commit "$temp_dir")" \
+        --arg root "$root" --arg data "$data" --arg mcp "$mcp_enabled" \
+        --arg installed_at "$(_now)" --argjson skills "$(printf '%s\n' "${installed[@]:-}" | jq -R . | jq -s 'map(select(. != ""))')" \
+        '{name:$name, source:$source, version:$version, spec:$spec, commit:$commit,
+          root:$root, data:$data, mcp_enabled:($mcp == "true"), skills:$skills,
+          installed_at:$installed_at, updated_at:$installed_at}')
+    save_plugin_info "$name" "$info"
+
+    echo ""
+    echo -e "${GREEN}installed plugin '$name' (${version:-unversioned})${NC}"
+    echo "  PLUGIN_ROOT: $root"
+    echo "  PLUGIN_DATA: $data"
+    if [[ ${#installed[@]} -gt 0 ]]; then
+        echo "  skills:      ${installed[*]} -> $skills_dir"
+    else
+        echo "  skills:      none"
+    fi
+    if [[ -f "$root/mcp.json" ]]; then
+        if [[ "$mcp_enabled" == true ]]; then
+            echo "  mcp:         $(jq -r '.mcpServers // {} | keys_unsorted | join(", ")' "$root/mcp.json") — 'skilla plugin mcp $name' to wire it into your host"
+        else
+            echo -e "  mcp:         ${YELLOW}disabled (mcp.json is invalid)${NC}"
+        fi
+    fi
+
+    rm -rf "$temp_dir"
+}
+
+cmd_plugin_list() {
+    init_skills_system
+    local scope_text="project"
+    if [[ -n "$CUSTOM_PATH" ]]; then scope_text="custom path"
+    elif [[ "$GLOBAL_FLAG" == true ]]; then scope_text="user"; fi
+
+    echo -e "${BLUE}Installed plugins ($scope_text):${NC}"
+    echo ""
+    local reg count
+    reg=$(read_plugin_registry)
+    count=$(echo "$reg" | jq 'length')
+    if [[ "$count" -eq 0 ]]; then
+        echo "No plugins installed."
+        return 0
+    fi
+
+    printf "%-26s %-12s %-8s %-6s %s\n" "NAME" "VERSION" "SKILLS" "MCP" "SOURCE"
+    printf "%-26s %-12s %-8s %-6s %s\n" "----" "-------" "------" "---" "------"
+    echo "$reg" | jq -r 'to_entries[] | [.key, (.value.version // "-"), (.value.skills | length | tostring), (if .value.mcp_enabled then "yes" else "-" end), .value.source] | @tsv' \
+        | while IFS=$'\t' read -r n v sc mcp src; do
+            [[ ${#src} -gt 40 ]] && src="${src:0:37}..."
+            printf "%-26s %-12s %-8s %-6s %s\n" "$n" "${v:--}" "$sc" "$mcp" "$src"
+        done
+}
+
+cmd_plugin_info() {
+    local name="$1"
+    init_skills_system
+    local info; info=$(get_plugin_info "$name")
+    if [[ -z "$info" ]]; then
+        echo -e "${RED}Plugin '$name' is not installed${NC}"
+        return 1
+    fi
+    local root data
+    resolve_plugin_paths "$name" "$info"
+    root="$PLUGIN_ROOT_PATH"
+    data="$PLUGIN_DATA_PATH"
+
+    echo -e "${BLUE}Plugin: $name${NC}"
+    echo ""
+    if [[ -f "$root/plugin.json" ]]; then
+        _print_plugin_manifest "$root"
+    fi
+    echo "Source:      $(echo "$info" | jq -r '.source')"
+    echo "Commit:      $(echo "$info" | jq -r '.commit')"
+    echo "Installed:   $(echo "$info" | jq -r '.installed_at')"
+    echo "PLUGIN_ROOT: $root"
+    echo "PLUGIN_DATA: $data"
+    [[ -f "$root/plugin.json" ]] && _print_plugin_components "$root"
+    return 0
+}
+
+# Print the plugin's mcp.json with the two placeholders expanded, ready to paste
+# into a host's MCP configuration.
+cmd_plugin_mcp() {
+    local name="$1"
+    init_skills_system
+    local info; info=$(get_plugin_info "$name")
+    if [[ -z "$info" ]]; then
+        echo -e "${RED}Plugin '$name' is not installed${NC}" >&2
+        return 1
+    fi
+    local root data
+    resolve_plugin_paths "$name" "$info"
+    root="$PLUGIN_ROOT_PATH"
+    data="$PLUGIN_DATA_PATH"
+    if [[ ! -f "$root/mcp.json" ]]; then
+        echo -e "${YELLOW}Plugin '$name' declares no MCP servers${NC}" >&2
+        return 0
+    fi
+    if [[ "$(echo "$info" | jq -r '.mcp_enabled')" != "true" ]]; then
+        echo -e "${YELLOW}Warning: this plugin's mcp.json failed validation — MCP is disabled${NC}" >&2
+    fi
+    # Expansion applies to args elements, env values and cwd only — never to env
+    # keys or to command. PLUGIN_ROOT/PLUGIN_DATA are then set by the client.
+    jq --arg root "$root" --arg data "$data" '
+        def expand: gsub("\\$\\{PLUGIN_ROOT\\}"; $root) | gsub("\\$\\{PLUGIN_DATA\\}"; $data);
+        .mcpServers |= with_entries(.value |= (
+              (if has("args") then .args |= map(expand) else . end)
+            | (if has("env")  then .env  |= with_entries(.value |= expand) else . end)
+            | (if has("cwd")  then .cwd  |= expand else . end)
+            | (if .type == "stdio" then .env = ((.env // {}) + {PLUGIN_ROOT: $root, PLUGIN_DATA: $data}) else . end)
+        ))' "$root/mcp.json"
+}
+
+cmd_plugin_remove() {
+    local name="$1"
+    init_skills_system
+    local info; info=$(get_plugin_info "$name")
+    if [[ -z "$info" ]]; then
+        echo -e "${YELLOW}Plugin '$name' is not in the registry (skipping)${NC}"
+        return 0
+    fi
+
+    if [[ "$YES_FLAG" != true ]]; then
+        read -r -p "Remove plugin '$name', its skills and its plugin data? (y/N): " confirm
+        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+            echo "Cancelled."
+            return 0
+        fi
+    fi
+
+    local root data skills_dir s
+    resolve_plugin_paths "$name" "$info"
+    root="$PLUGIN_ROOT_PATH"
+    data="$PLUGIN_DATA_PATH"
+    skills_dir=$(get_skills_dir)
+
+    while IFS= read -r s; do
+        [[ -z "$s" ]] && continue
+        # Only remove a skill still attributed to this plugin.
+        if [[ "$(get_skill_info "$s" | jq -r '.plugin // empty')" == "$name" ]]; then
+            rm -rf "${skills_dir:?}/$s"
+            remove_skill_from_registry "$s"
+            echo "  removed skill: $s"
+        fi
+    done < <(echo "$info" | jq -r '.skills[]?')
+
+    [[ -n "$root" && -d "$root" ]] && rm -rf "$root"
+    [[ -n "$data" && -d "$data" ]] && rm -rf "$data"
+    remove_plugin_from_registry "$name"
+    echo -e "${GREEN}Plugin '$name' removed${NC}"
+    return 0
+}
+
+# Scaffold a conformant plugin skeleton.
+cmd_plugin_init() {
+    local dir="${1:-.}"
+    mkdir -p "$dir/skills"
+    local name
+    name=$(basename "$(cd "$dir" && pwd -P)" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9.-' '-')
+    name="${name#-}"; name="${name%-}"
+    [[ -z "$name" ]] && name="my-plugin"
+
+    if [[ -f "$dir/plugin.json" ]]; then
+        echo -e "${YELLOW}$dir/plugin.json already exists — leaving it alone${NC}"
+    else
+        jq -n --arg schema "$PLUGIN_SCHEMA_URL" --arg name "$name" '{
+            "$schema": $schema,
+            name: $name,
+            version: "0.1.0",
+            description: "What this plugin provides and when to use it.",
+            license: "MIT"
+        }' > "$dir/plugin.json"
+        echo -e "${GREEN}created${NC} $dir/plugin.json (Agent Plugins $AGENT_PLUGINS_VERSION, name: $name)"
+    fi
+
+    echo -e "${GREEN}ready${NC}   $dir/skills/ — add skills/<name>/SKILL.md (agentskills.io)"
+    echo ""
+    echo "Optional: an mcp.json alongside plugin.json, e.g."
+    echo "  {\"\$schema\": \"$MCP_SCHEMA_URL\", \"mcpServers\": {}}"
+    echo ""
+    echo "Then check it with: skilla plugin validate $dir"
+}
+
+cmd_plugin() {
+    local sub="${1:-}"
+    shift || true
+    case "$sub" in
+        ls|list)
+            # `plugin ls <source>` inspects a remote source; bare `plugin ls`
+            # lists what is installed.
+            if [[ -n "${1:-}" ]]; then cmd_plugin_ls "$1"; else cmd_plugin_list; fi ;;
+        add|install) cmd_plugin_add "${1:-}" ;;
+        info)
+            if [[ -z "${1:-}" ]]; then echo -e "${RED}Error: plugin info requires a name${NC}"; return 1; fi
+            cmd_plugin_info "$1" ;;
+        mcp)
+            if [[ -z "${1:-}" ]]; then echo -e "${RED}Error: plugin mcp requires a name${NC}"; return 1; fi
+            cmd_plugin_mcp "$1" ;;
+        remove|rm)
+            if [[ -z "${1:-}" ]]; then echo -e "${RED}Error: plugin remove requires a name${NC}"; return 1; fi
+            cmd_plugin_remove "$1" ;;
+        validate|check) cmd_plugin_validate "${1:-.}" ;;
+        init)           cmd_plugin_init "${1:-.}" ;;
+        *)
+            echo -e "${RED}Unknown plugin subcommand: ${sub:-<none>}${NC}"
+            echo "Try: plugin ls|add|info|mcp|remove|validate|init"
+            return 1 ;;
+    esac
+}
+
 # Show usage
 show_usage() {
     local self="${BASH_SOURCE[0]}"
     local loc
     loc="$(cd "$(dirname "$self")" 2>/dev/null && pwd -P)/$(basename "$self")"
     cat << EOF
-skilla - Manage Agent Skills from git repositories
-Compliant with https://agentskills.io/ specification
+skilla - Manage Agent Skills and Agent Plugins from git repositories
+Skills:  https://agentskills.io/specification
+Plugins: https://agent-plugins.org/specification (Agent Plugins $AGENT_PLUGINS_VERSION)
 
 Usage: skilla <command> [options] [arguments]
 
@@ -847,13 +1883,24 @@ Global Options:
     --bundle <file>       Sigstore bundle for 'verify' (default: <artifact>.bundle)
     --key <file>          Public key for 'verify' (default: \$SKILLA_TRUST_KEY or ~/.agents/cosign.pub)
 
-Commands:
+Skill commands:
     add <source>          Add (install) skills from a git URL (with --force to reinstall)
     repo ls <source>      List the skills available in a repository (no install)
     update [skill]        Update a specific skill or all skills
     list, ls              List all installed skills with their versions
     info <skill>          Show detailed information about a skill
     remove, rm [skill]    Remove a skill (or all skills with --all)
+
+Plugin commands (Agent Plugins $AGENT_PLUGINS_VERSION):
+    plugin ls [source]    Inspect a plugin at a git URL, or list installed plugins
+    plugin add <source>   Install a plugin: package + its skills + its plugin data
+    plugin info <name>    Manifest, components, PLUGIN_ROOT / PLUGIN_DATA
+    plugin mcp <name>     Print the plugin's mcp.json with placeholders expanded
+    plugin remove <name>  Uninstall a plugin, its skills and its plugin data
+    plugin validate [dir] Conformance-check a plugin directory (default: .)
+    plugin init [dir]     Scaffold a conformant plugin.json + skills/
+
+Other:
     verify <artifact>     Verify a signed release artifact (cosign) against the trust key
     version               Print the skilla version (also -v, --version)
 
@@ -862,26 +1909,31 @@ Examples:
     skilla add <repository-url>
     skilla add --scope user <repository-url>
     skilla add --skill nginx-validation <repository-url>
-    skilla add --force <repository-url>
     skilla update nginx-validation
-    skilla update -g
-    skilla update --check nginx-validation
     skilla list
-    skilla ls --scope user
     skilla info nginx-validation
-    skilla remove nginx-validation
     skilla rm --all -y
+
+    skilla plugin ls https://github.com/acme/my-plugin       # inspect, no install
+    skilla plugin add https://github.com/acme/my-plugin
+    skilla plugin mcp my-plugin >> ~/.config/host/mcp.json   # wire MCP into your host
+    skilla plugin validate .                                 # authoring a plugin
+    skilla plugin init ./my-plugin
 
 Notes:
     - --scope project (the default) installs to the project's .agents/skills/ (the
       path Devin indexes for that repo); --scope user (or -g) installs to the
-      user-global ~/.agents/skills/ (Devin Desktop).
-    - Dependencies declared via 'requires:' in SKILL.md (or plugin.json
-      'requiredSkills') are installed automatically from the same source.
-    - Version is read from SKILL.md frontmatter 'version:' (plugin.json fallback),
-      else the commit hash.
+      user-global ~/.agents/skills/ (Devin Desktop). Plugins live beside them in
+      .agents/plugins/<name>/ with persistent data in .agents/plugin-data/<name>/.
+    - Version is read from SKILL.md 'metadata.version' (the agentskills.io
+      location), then a legacy top-level 'version:', then plugin.json, then the
+      commit hash.
+    - Dependencies declared via 'metadata.requires' or 'requires:' in SKILL.md (or
+      plugin.json 'requiredSkills') are installed automatically from the same source.
     - add --skill, update, and repo ls fetch only the needed files (partial +
       sparse clone) when the server supports it — full shallow clone otherwise.
+    - skilla never runs MCP servers or skill code. 'plugin mcp' prints a ready
+      config; your host launches it.
     - Only removes skills that are in the registry; ignores other files in the
       skills directory.
 
@@ -964,6 +2016,9 @@ main() {
             ;;
         remove|rm)
             remove_skill "${command_args[0]:-}"
+            ;;
+        plugin|plugins)
+            cmd_plugin "${command_args[@]}"
             ;;
         repo)
             case "${command_args[0]:-}" in

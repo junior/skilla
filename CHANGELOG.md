@@ -5,6 +5,45 @@ All notable changes are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-13
+### Added
+- **Agent Plugins 1.0.0 support** ([agent-plugins.org](https://agent-plugins.org/specification)),
+  the vendor-neutral packaging standard published 2026-08-06 by a TSC of Amazon, Cursor,
+  Google, Microsoft, OpenAI and Vercel. New `skilla plugin` command group:
+  - `plugin ls [source]` — inspect a plugin at a git URL (manifest, skills, MCP servers,
+    extension namespaces) without installing, or list installed plugins.
+  - `plugin add <source>` — install the package tree intact at `.agents/plugins/<name>/`
+    (so `${PLUGIN_ROOT}` resolves), copy its skills into the skills dir where agents index
+    them, and create the persistent `.agents/plugin-data/<name>/` (`PLUGIN_DATA`).
+  - `plugin info <name>`, `plugin remove <name>` (package + its skills + its data).
+  - `plugin mcp <name>` — print the plugin's `mcp.json` with `${PLUGIN_ROOT}`/`${PLUGIN_DATA}`
+    expanded to absolute paths and both variables injected into each stdio server's `env`,
+    ready to paste into whatever host launches MCP servers. skilla still runs nothing.
+  - `plugin validate [dir]` — conformance-check the closed manifest schema, the `name`
+    grammar, the closed `author` object, extension namespacing, `mcp.json` transports
+    (single-token `command`, `cwd` containment, reserved env keys, http-only-for-loopback
+    URLs, case-insensitive duplicate headers) and each skill's frontmatter.
+  - `plugin init [dir]` — scaffold a conformant `plugin.json` + `skills/`.
+- Plugins are tracked in their own `plugins.json` registry, so plugin and skill names can
+  never collide; skills installed from a plugin record their originating `plugin`.
+- `add` now recognises an Agent Plugins source, validates its manifest before copying, and
+  says that it is installing the skills only.
+- `metadata.requires` (a spec-safe string list) and `plugin.json`
+  `extensions["dev.skilla"].requiredSkills` as dependency sources.
+### Changed
+- Spec failure boundaries are honoured: unknown top-level manifest fields and a non-object
+  `extensions` are reported but non-fatal; any other manifest violation rejects the plugin;
+  an invalid `mcp.json` disables MCP only; a bad server entry or skill is skipped.
+### Fixed
+- **Skill versions are read from `metadata.version`.** The
+  [agentskills.io spec](https://agentskills.io/specification) defines no top-level
+  `version:` field — `metadata` is where it belongs — so versions were silently falling
+  through to the commit hash for conformant skills. A top-level `version:` is still read
+  as a legacy fallback.
+- The shipped `skills/skilla/SKILL.md` is now spec-conformant: no top-level `version:`,
+  no non-spec `triggers:`, `allowed-tools` as the specified space-separated string, and
+  `metadata` values flattened to strings.
+
 ## [0.3.0] - 2026-07-10
 ### Added
 - `skilla repo ls <source>` — list a repository's skills (name · version · description)

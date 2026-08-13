@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>skilla — Agent Skills, installed. Pure bash.</title>
-<meta name="description" content="A tiny bash CLI to install agentskills.io Agent Skills from git — no Node.js, with dependency resolution. Devin-friendly (.agents/skills)." />
+<title>skilla — Agent Skills and Agent Plugins, installed. Pure bash.</title>
+<meta name="description" content="A tiny bash CLI to install agentskills.io Agent Skills and agent-plugins.org Agent Plugins from git — no Node.js, with dependency resolution and plugin validation. Devin-friendly (.agents/skills)." />
 <style>
   :root{
     --bg:#0d1117; --panel:#161b22; --border:#26303c; --fg:#e6edf3; --muted:#9aa7b4;
@@ -55,13 +55,15 @@
 <div class="wrap">
   <header>
     <div class="logo">skilla</div>
-    <p class="tag">Agent Skills, installed. <span style="color:var(--accent)">Pure bash.</span></p>
+    <p class="tag">Agent Skills &amp; Plugins, installed. <span style="color:var(--accent)">Pure bash.</span></p>
     <p class="sub">A tiny CLI that installs <a href="https://agentskills.io/">agentskills.io</a> Agent
-      Skills from any git repo — with dependency resolution, into the <code>.agents/skills/</code>
-      path agents like Devin index. No Node.js. No runtime. Just <code>bash</code> + <code>git</code> + <code>jq</code>.</p>
+      Skills and <a href="https://agent-plugins.org/">agent-plugins.org</a> Agent Plugins from any git
+      repo — with dependency resolution and manifest validation, into the <code>.agents/</code>
+      paths agents like Devin index. No Node.js. No runtime. Just <code>bash</code> + <code>git</code> + <code>jq</code>.</p>
     <div class="badges">
       <span class="badge">⚡ zero Node.js</span>
       <span class="badge">🧩 resolves dependencies</span>
+      <span class="badge">🔌 Agent Plugins 1.0.0</span>
       <span class="badge">📁 .agents/skills (Devin-friendly)</span>
       <span class="badge">🔒 no code runs at install</span>
       <span class="badge">📜 MIT</span>
@@ -75,10 +77,10 @@
 brew install junior/tap/skilla
 
 <span class="cmt"># …or managed via mise (no Node.js)</span>
-mise use -g 'github:junior/skilla[exe=skilla,matching=skilla]@0.3.0'
+mise use -g 'github:junior/skilla[exe=skilla,matching=skilla]@0.4.0'
 
 <span class="cmt"># …or grab the single script</span>
-curl -fsSL https://raw.githubusercontent.com/junior/skilla/v0.3.0/skilla -o ~/.local/bin/skilla && chmod +x ~/.local/bin/skilla
+curl -fsSL https://raw.githubusercontent.com/junior/skilla/v0.4.0/skilla -o ~/.local/bin/skilla && chmod +x ~/.local/bin/skilla
 
 <span class="cmt"># then</span>
 skilla add git@github.com:acme/skills.git --skill nginx   <span class="cmt"># installs nginx + its deps</span>
@@ -90,7 +92,8 @@ skilla add --scope user git@github.com:acme/skills.git    <span class="cmt"># us
   <p class="lead">The agent-skills CLI space is crowded — and almost all of it rides on Node/<code>npx</code>. skilla is deliberately small and runtime-free.</p>
   <div class="grid">
     <div class="card"><h3><span class="k">No Node.js</span></h3><p>One ~800-line bash script. If you have git and jq, you can install skills — on a server, a CI runner, or a locked-down box.</p></div>
-    <div class="card"><h3>Dependency resolution</h3><p>A skill's <code>requires:</code> (or <code>plugin.json</code> <code>requiredSkills</code>) are pulled automatically from the same source — transitively.</p></div>
+    <div class="card"><h3>Dependency resolution</h3><p>A skill's <code>requires</code> (frontmatter, or <code>plugin.json</code> <code>requiredSkills</code>) are pulled automatically from the same source — transitively.</p></div>
+    <div class="card"><h3><span class="k">Agent Plugins 1.0.0</span></h3><p>Installs <a href="https://agent-plugins.org/">agent-plugins.org</a> packages: validates the manifest, keeps the tree intact for <code>${PLUGIN_ROOT}</code>, and hands you the MCP config with placeholders expanded.</p></div>
     <div class="card"><h3>Project &amp; global scopes</h3><p>Install into a repo's <code>.agents/skills/</code> or your home <code>~/.agents/skills/</code>, tracked in a small JSON registry.</p></div>
     <div class="card"><h3>Safe by default</h3><p>It clones and copies — <strong>nothing executes at install time</strong>. A skill's scripts only run later, when an agent uses it.</p></div>
     <div class="card"><h3>Clean lifecycle</h3><p><code>add</code>, <code>update</code>, <code>list</code>, <code>info</code>, <code>remove</code> — registry-scoped, so it only manages what it installed.</p></div>
@@ -111,11 +114,16 @@ skilla add --scope user git@github.com:acme/skills.git    <span class="cmt"># us
     <tr><td><code>skilla info &lt;skill&gt;</code></td><td>Details + declared dependencies</td></tr>
     <tr><td><code>skilla update [skill]</code></td><td>Update one, or all</td></tr>
     <tr><td><code>skilla remove &lt;skill&gt;</code></td><td>Remove (registry-scoped)</td></tr>
+    <tr><td><code>skilla plugin ls &lt;git-url&gt;</code></td><td>Inspect an Agent Plugin — manifest, skills, MCP servers</td></tr>
+    <tr><td><code>skilla plugin add &lt;git-url&gt;</code></td><td>Install a plugin: package + its skills + its plugin data</td></tr>
+    <tr><td><code>skilla plugin mcp &lt;name&gt;</code></td><td>Its <code>mcp.json</code> with <code>${PLUGIN_ROOT}</code>/<code>${PLUGIN_DATA}</code> expanded</td></tr>
+    <tr><td><code>skilla plugin validate</code></td><td>Conformance-check a plugin you're authoring</td></tr>
   </table>
 
   <footer>
     <a href="https://github.com/junior/skilla">github.com/junior/skilla</a> · MIT ·
-    follows the <a href="https://agentskills.io/specification">Agent Skills</a> spec
+    follows the <a href="https://agentskills.io/specification">Agent Skills</a> and
+    <a href="https://agent-plugins.org/specification">Agent Plugins 1.0.0</a> specs
   </footer>
 </div>
 </body>

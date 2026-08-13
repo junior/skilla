@@ -1,34 +1,29 @@
 ---
 name: skilla
-version: 0.3.0
-description: Install, update, list, verify, and remove agent skills (agentskills.io spec) using the skilla CLI. Use whenever the user asks to install, add, update, or remove an agent skill from a git repository or skill catalog — in any AI coding CLI (Claude Code, Devin, Cursor, ...) — instead of vendor-specific plugin commands.
-allowed-tools:
-  - exec
-  - read
-triggers:
-  - user
-  - model
+description: Install, update, list, verify, and remove agent skills (agentskills.io) and Agent Plugins (agent-plugins.org) using the skilla CLI. Use whenever the user asks to install, add, update, or remove an agent skill or plugin from a git repository or catalog — in any AI coding CLI (Claude Code, Devin, Cursor, ...) — instead of vendor-specific plugin commands.
+license: MIT
+compatibility: Requires bash, git and jq; cosign only for the 'verify' command
+allowed-tools: Bash(skilla:*) Bash(curl:*) Read
 metadata:
+  version: "0.4.0"
   author: "@junior"
-  owners:
-    - "@junior"
   category: meta
-  tags:
-    - skills
-    - installer
-    - agentskills
-    - cli
+  tags: "skills, plugins, installer, agentskills, agent-plugins, cli"
 ---
 
-# skilla — the generic agent-skill installer
+# skilla — the generic agent-skill and plugin installer
 
-`skilla` is a single-file bash CLI (no Node.js) that installs skills following the
-[agentskills.io specification](https://agentskills.io/specification) from any git
-repository: a source with `skills/<name>/SKILL.md` directories (a catalog) or a
-single root `SKILL.md`. It resolves declared dependencies, tracks versions in a
-registry, and can verify cosign-signed catalogs. Use it instead of vendor-specific
-mechanisms (`gh skill install`, `devin plugins install`, marketplace UIs) so the
-same skills work across AI CLIs.
+`skilla` is a single-file bash CLI (no Node.js) that installs, from any git repository:
+
+- **Agent Skills** ([agentskills.io](https://agentskills.io/specification)) — a source
+  with `skills/<name>/SKILL.md` directories (a catalog) or a single root `SKILL.md`.
+- **Agent Plugins** ([agent-plugins.org](https://agent-plugins.org/specification) 1.0.0)
+  — a `plugin.json` package bundling `skills/` and an `mcp.json`.
+
+It resolves declared dependencies, tracks versions in a registry, and can verify
+cosign-signed catalogs. Use it instead of vendor-specific mechanisms
+(`gh skill install`, `devin plugins install`, marketplace UIs) so the same skills
+and plugins work across AI CLIs.
 
 ## Preflight
 
@@ -61,6 +56,30 @@ skilla verify <artifact> --key <pub>     # cosign-verify a signed release bundle
 skilla help                              # full usage
 ```
 
+## Agent Plugins (agent-plugins.org 1.0.0)
+
+A plugin is a directory with a `plugin.json` manifest plus components in fixed
+locations: `skills/<name>/SKILL.md` and `mcp.json`.
+
+```bash
+skilla plugin ls <git-url>               # inspect a plugin: manifest, skills, MCP servers
+skilla plugin add <git-url>              # install package + its skills + its plugin data
+skilla plugin ls                         # what's installed
+skilla plugin info <name>                # manifest, components, PLUGIN_ROOT / PLUGIN_DATA
+skilla plugin mcp <name>                 # mcp.json with ${PLUGIN_ROOT}/${PLUGIN_DATA} expanded
+skilla plugin remove <name>              # package + its skills + its data
+skilla plugin validate [dir]             # conformance-check (for plugin authors)
+skilla plugin init [dir]                 # scaffold a conformant plugin.json
+```
+
+- `plugin add` keeps the package tree intact at `.agents/plugins/<name>/` (so
+  `${PLUGIN_ROOT}` resolves) and *also* copies its skills into the skills dir where
+  agents index them. `.agents/plugin-data/<name>/` is the persistent `PLUGIN_DATA`.
+- skilla does **not** run MCP servers. `skilla plugin mcp <name>` prints a ready-to-paste
+  config with the placeholders expanded — the user's host launches the server.
+- Plain `skilla add` on a plugin source still works: it installs the skills only and
+  says so.
+
 ## Scopes — where skills land
 
 - `--scope project` (**default**): `./.agents/skills/` in the current repo — the
@@ -77,10 +96,16 @@ skilla help                              # full usage
   `skilla add <repo> --skill <name>` (project scope unless they say global/all projects,
   then `--scope user`).
 - "install everything from the catalog" → `skilla add <repo>`.
-- "what skills do I have?" → `skilla list` (and `skilla list --scope user`).
+- "install the plugin at `<repo>`" → `skilla plugin add <repo>`. If unsure whether a
+  source is a plugin or a plain catalog, run `skilla plugin ls <repo>` first — it says
+  so when there is no `plugin.json`.
+- "what skills do I have?" → `skilla list` (and `skilla list --scope user`);
+  for plugins, `skilla plugin ls`.
 - "update my skills" → `skilla update`.
-- Dependencies (`requires:` in SKILL.md frontmatter, or plugin.json `requiredSkills`)
-  are resolved automatically from the same source — do not install them by hand.
+- "is my plugin valid?" / authoring a plugin → `skilla plugin validate .`
+- Dependencies (`metadata.requires` or `requires:` in SKILL.md frontmatter, or plugin.json
+  `requiredSkills`) are resolved automatically from the same source — do not install them
+  by hand.
 - If the catalog publishes signed release bundles, verify before trusting:
   `skilla verify skills-<ver>.tgz --key trust/cosign.pub`.
 - After installing into a project, remind the user to commit `.agents/skills/` if
@@ -89,6 +114,10 @@ skilla help                              # full usage
 ## Notes
 
 - Sources can be HTTPS or SSH git URLs (internal GitLab or GitHub both work).
-- skilla never runs skill code at install time — it copies files and records
-  name/version/source in a registry (`.agents/registry.json` per scope).
+- skilla never runs skill code, install hooks or MCP servers — it copies files and
+  records name/version/source in a registry (`.agents/registry.json` for skills,
+  `.agents/plugins.json` for plugins, per scope).
+- A skill's version comes from `metadata.version` in its SKILL.md frontmatter — the
+  agentskills.io spec has no top-level `version:` field. A top-level `version:` is
+  still read as a legacy fallback.
 - Repository & docs: https://github.com/junior/skilla

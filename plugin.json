@@ -1,0 +1,14 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "skilla",
+  "version": "0.4.0",
+  "description": "Install, update and remove Agent Skills and Agent Plugins from git repositories with the skilla CLI, instead of vendor-specific plugin commands.",
+  "author": {
+    "name": "junior",
+    "url": "https://github.com/junior"
+  },
+  "homepage": "https://junior.github.io/skilla/",
+  "repository": "https://github.com/junior/skilla",
+  "license": "MIT",
+  "keywords": ["skills", "plugins", "installer", "agentskills", "agent-plugins", "cli"]
+}

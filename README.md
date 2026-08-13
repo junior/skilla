@@ -4,19 +4,24 @@
 [![Release](https://img.shields.io/github/v/release/junior/skilla?logo=github)](https://github.com/junior/skilla/releases)
 [![Homebrew](https://img.shields.io/badge/homebrew-junior%2Ftap%2Fskilla-FBB040?logo=homebrew&logoColor=white)](https://github.com/junior/homebrew-tap)
 [![Agent Skills](https://img.shields.io/badge/Agent%20Skills-agentskills.io-0B7C84)](https://agentskills.io/specification)
+[![Agent Plugins](https://img.shields.io/badge/Agent%20Plugins-1.0.0-0B7C84)](https://agent-plugins.org/specification)
 [![Made for AI agents](https://img.shields.io/badge/made%20for-AI%20agents%20%C2%B7%20Devin%20%C2%B7%20Claude%20%C2%B7%20Cursor-6f42c1)](#use-skilla-from-your-ai-cli-the-skilla-skill)
 [![Pure Bash](https://img.shields.io/badge/pure%20bash-no%20Node.js-4EAA25?logo=gnubash&logoColor=white)](https://github.com/junior/skilla)
 [![ShellCheck](https://img.shields.io/badge/shellcheck-passing-brightgreen?logo=gnu-bash)](https://www.shellcheck.net/)
 [![POSIX](https://img.shields.io/badge/POSIX-compliant-green?logo=linux)](https://pubs.opengroup.org/onlinepubs/9699919799/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A small, dependency-light CLI for installing [Agent Skills](https://agentskills.io/)
-from git repositories into the locations agents read them from.
+A small, dependency-light CLI for installing [Agent Skills](https://agentskills.io/) and
+[Agent Plugins](https://agent-plugins.org/) from git repositories into the locations
+agents read them from.
 
 It clones a repo, discovers `skills/<name>/SKILL.md`, resolves declared
 dependencies (`requires:`), and installs the skills into a project
 (`.agents/skills/`) or your home (`~/.agents/skills/`) — tracking what's installed
-in a small JSON registry so it can `list`, `update`, and `remove` cleanly.
+in a small JSON registry so it can `list`, `update`, and `remove` cleanly. When the
+source is an [Agent Plugins 1.0.0](https://agent-plugins.org/specification) package,
+`skilla plugin` validates the manifest, installs the whole package, and hands you the
+MCP config with `${PLUGIN_ROOT}`/`${PLUGIN_DATA}` already expanded.
 
 > Built to install [agentskills.io](https://agentskills.io/specification) skills for
 > agents such as Devin (which indexes `.agents/skills/<name>/SKILL.md`) while staying
@@ -37,13 +42,13 @@ brew install junior/tap/skilla
 **Managed — [mise](https://mise.jdx.dev):**
 
 ```bash
-mise use -g 'github:junior/skilla[exe=skilla,matching=skilla]@0.3.0'
+mise use -g 'github:junior/skilla[exe=skilla,matching=skilla]@0.4.0'
 ```
 
 **Quick — fetch the single script onto your PATH:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/junior/skilla/v0.3.0/skilla \
+curl -fsSL https://raw.githubusercontent.com/junior/skilla/v0.4.0/skilla \
   -o ~/.local/bin/skilla && chmod +x ~/.local/bin/skilla
 ```
 
@@ -52,13 +57,25 @@ curl -fsSL https://raw.githubusercontent.com/junior/skilla/v0.3.0/skilla \
 ```text
 skilla <command> [options] [arguments]
 
-Commands:
+Skills:
   add <git-url>        Install skills from a repo (with --force to reinstall)
   repo ls <git-url>    List a repo's skills (name · version · description) — no install
   update [skill]       Update one skill, or all if omitted
   list, ls             List installed skills + versions
   info <skill>         Show a skill's details + declared dependencies
   remove, rm [skill]   Remove a skill (or all with --all)
+
+Plugins (Agent Plugins 1.0.0):
+  plugin ls [git-url]  Inspect a plugin at a URL, or list installed plugins
+  plugin add <git-url> Install a plugin: package + its skills + its plugin data
+  plugin info <name>   Manifest, components, PLUGIN_ROOT / PLUGIN_DATA
+  plugin mcp <name>    Print its mcp.json with the placeholders expanded
+  plugin remove <name> Uninstall the package, its skills and its data
+  plugin validate [dir] Conformance-check a plugin directory (default: .)
+  plugin init [dir]    Scaffold a conformant plugin.json + skills/
+
+Other:
+  verify <artifact>    Verify a cosign-signed release artifact
   version              Print version (also -v, --version)
 
 Options:
@@ -85,15 +102,66 @@ skilla update nginx
 skilla remove nginx
 ```
 
+## Agent Plugins
+
+An [Agent Plugin](https://agent-plugins.org/specification) is a directory with a
+`plugin.json` manifest and components in fixed locations — `skills/<name>/SKILL.md`
+and `mcp.json`. The format is vendor-neutral (TSC: Amazon, Cursor, Google, Microsoft,
+OpenAI, Vercel), so the same package loads in ChatGPT/Codex, Cursor, GitHub Copilot,
+Kiro and VS Code — and here.
+
+```bash
+skilla plugin ls https://github.com/acme/my-plugin    # manifest + skills + MCP servers
+skilla plugin add https://github.com/acme/my-plugin
+skilla plugin ls                                       # installed plugins
+skilla plugin mcp my-plugin                            # ready-to-paste MCP config
+skilla plugin remove my-plugin
+```
+
+| | Location |
+|---|---|
+| Package (`PLUGIN_ROOT`) | `.agents/plugins/<name>/` — kept intact, so `${PLUGIN_ROOT}` resolves |
+| Persistent data (`PLUGIN_DATA`) | `.agents/plugin-data/<name>/` — created on install, survives updates |
+| Its skills | copied into `.agents/skills/` where agents index them, tagged with the plugin |
+| Registry | `.agents/plugins.json` (separate from `registry.json`, so names can't collide) |
+
+**skilla does not run MCP servers.** `skilla plugin mcp <name>` prints the plugin's
+`mcp.json` with `${PLUGIN_ROOT}`/`${PLUGIN_DATA}` expanded to absolute paths (and
+`PLUGIN_ROOT`/`PLUGIN_DATA` injected into each stdio server's `env`), ready to paste
+into whatever host actually launches them.
+
+Failure boundaries follow the spec: unknown top-level manifest fields and a non-object
+`extensions` are reported but non-fatal; any other manifest violation rejects the whole
+plugin; an invalid `mcp.json` disables MCP only; a bad single server entry or skill is
+skipped and the rest still installs.
+
+### Authoring a plugin
+
+```bash
+skilla plugin init ./my-plugin    # scaffold a conformant plugin.json + skills/
+skilla plugin validate .          # check manifest, mcp.json and skills against 1.0.0
+```
+
+`validate` checks the closed manifest schema, the `name` grammar, the closed `author`
+object, extension namespacing, the `mcp.json` transports (stdio single-token `command`,
+`cwd` containment, reserved `PLUGIN_ROOT`/`PLUGIN_DATA` env keys, http-only-for-loopback
+URLs, case-insensitive duplicate headers) and each skill's `SKILL.md` frontmatter.
+Unlike a loading client it keeps going after a fatal manifest error, so you can fix
+everything in one pass.
+
 ## How it works
 
 - **Discovery** — a source repo holds skills at `skills/<name>/SKILL.md` (a repo with a
-  single root `SKILL.md` is treated as one skill).
-- **Dependencies** — if a skill declares `requires:` in its `SKILL.md` frontmatter (or
-  `requiredSkills` in an optional `plugin.json`), those sibling skills are installed
-  automatically from the same source (transitive closure).
-- **Version** — read from `SKILL.md` frontmatter `version:` (falling back to `plugin.json`,
-  then the commit hash).
+  single root `SKILL.md` is treated as one skill). This is also the Agent Plugins
+  location, so a plugin's skills are found the same way.
+- **Dependencies** — if a skill declares `metadata.requires` (or a top-level `requires:`)
+  in its `SKILL.md` frontmatter, or `requiredSkills` under `plugin.json`
+  `extensions["dev.skilla"]`, those sibling skills are installed automatically from the
+  same source (transitive closure).
+- **Version** — read from `SKILL.md` frontmatter `metadata.version` — the location the
+  [agentskills.io spec](https://agentskills.io/specification) defines, which has no
+  top-level `version:` field. A top-level `version:` is still read as a legacy fallback,
+  then `plugin.json`, then the commit hash.
 - **Registry** — installs are recorded in `registry.json` beside the skills dir (`source`,
   `commit`, `version`, timestamps), so `list`/`update`/`remove` are exact and only ever
   touch skills this tool installed.
@@ -105,11 +173,11 @@ skilla remove nginx
 
 ## Scopes
 
-| Scope | Skills dir | Registry |
-|-------|-----------|----------|
-| `--scope project` (default) | `./.agents/skills/` | `./.agents/registry.json` |
-| `--scope user` (or `-g`) | `~/.agents/skills/` | `~/.agents/registry.json` |
-| custom (`--path DIR`) | `DIR` | `DIR/../registry.json` |
+| Scope | Skills dir | Plugins dir | Registry |
+|-------|-----------|-------------|----------|
+| `--scope project` (default) | `./.agents/skills/` | `./.agents/plugins/` | `./.agents/registry.json` |
+| `--scope user` (or `-g`) | `~/.agents/skills/` | `~/.agents/plugins/` | `~/.agents/registry.json` |
+| custom (`--path DIR`) | `DIR` | `DIR/../plugins/` | `DIR/../registry.json` |
 
 ## Use skilla from your AI CLI (the `skilla` skill)
 
@@ -128,6 +196,13 @@ skilla add --scope user https://github.com/junior/skilla --skill skilla
 
 # for a Claude Code project (its skills dir):
 skilla add --path .claude/skills https://github.com/junior/skilla --skill skilla
+```
+
+This repo is itself a conformant **Agent Plugin** (`plugin.json` + `skills/`), so any
+Agent Plugins client can load it — including skilla:
+
+```bash
+skilla plugin add https://github.com/junior/skilla
 ```
 
 ## Development
