@@ -214,6 +214,20 @@ NEW="$TMP/newpg"; mkdir -p "$NEW"
 "$SM" plugin init "$NEW" >/dev/null 2>&1
 "$SM" plugin validate "$NEW" >/dev/null 2>&1 && pass "scaffold is conformant" || fail "scaffold does not validate"
 
+echo "test: plugin init derives a legal name from an awkward directory"
+for d in "my__tools" "-Lead-Trail-" "dots..here" "UPPER Case"; do
+  awk_dir="$TMP/names/$d"; mkdir -p "$awk_dir"
+  "$SM" plugin init "$awk_dir" >/dev/null 2>&1
+  n="$(jq -r .name "$awk_dir/plugin.json")"
+  case "$n" in
+    *--*|*..*) fail "'$d' -> '$n' (illegal run)" ;;
+  esac
+  echo "$n" | grep -qE '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$' \
+    && pass "'$d' -> '$n'" || fail "'$d' -> '$n' (illegal name)"
+  "$SM" plugin validate "$awk_dir" >/dev/null 2>&1 \
+    && pass "  scaffold validates" || fail "  scaffold for '$d' does not validate"
+done
+
 echo "test: add on a plugin source installs skills and says so"
 ap_out="$( cd "$TMP" && "$SM" add --path "$TMP/aproj/.agents/skills" "$PG" 2>&1 )"
 echo "$ap_out" | grep -q "Source is an Agent Plugin: acme-tools" \

@@ -1801,14 +1801,25 @@ cmd_plugin_remove() {
     return 0
 }
 
+# Derive a manifest-legal name from a directory name: lowercase, [a-z0-9.-] only,
+# no '--' or '..' runs, alphanumeric at both ends, 64 chars max. A directory like
+# 'my__tools' would otherwise yield 'my--tools', which the spec forbids.
+_derive_plugin_name() {
+    local n
+    n=$(basename "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9.-' '-' | tr -s '.-' '.-')
+    n="${n#"${n%%[a-z0-9]*}"}"          # strip leading non-alphanumerics
+    n="${n%"${n##*[a-z0-9]}"}"          # strip trailing non-alphanumerics
+    n="${n:0:64}"
+    n="${n%"${n##*[a-z0-9]}"}"          # truncation may leave a trailing '.' or '-'
+    if [[ -z "$n" ]]; then echo "my-plugin"; else echo "$n"; fi
+}
+
 # Scaffold a conformant plugin skeleton.
 cmd_plugin_init() {
     local dir="${1:-.}"
     mkdir -p "$dir/skills"
     local name
-    name=$(basename "$(cd "$dir" && pwd -P)" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9.-' '-')
-    name="${name#-}"; name="${name%-}"
-    [[ -z "$name" ]] && name="my-plugin"
+    name=$(_derive_plugin_name "$(cd "$dir" && pwd -P)")
 
     if [[ -f "$dir/plugin.json" ]]; then
         echo -e "${YELLOW}$dir/plugin.json already exists — leaving it alone${NC}"

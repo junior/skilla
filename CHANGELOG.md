@@ -4,6 +4,11 @@ All notable changes are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versioning is SemVer.
 
 ## [Unreleased]
+### Fixed
+- `plugin init` could scaffold a `plugin.json` that fails its own validator: the
+  directory name was mapped character-by-character, so `my__tools` became the
+  manifest-illegal `my--tools`. Repeated `-`/`.` runs are now squeezed, leading and
+  trailing non-alphanumerics stripped, and the result truncated to 64 characters.
 
 ## [0.4.0] - 2026-08-13
 ### Added
