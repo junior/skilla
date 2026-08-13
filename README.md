@@ -42,13 +42,13 @@ brew install junior/tap/skilla
 **Managed — [mise](https://mise.jdx.dev):**
 
 ```bash
-mise use -g 'github:junior/skilla[exe=skilla,matching=skilla]@0.4.0'
+mise use -g 'github:junior/skilla[exe=skilla,matching=skilla]@0.4.1'
 ```
 
 **Quick — fetch the single script onto your PATH:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/junior/skilla/v0.4.0/skilla \
+curl -fsSL https://raw.githubusercontent.com/junior/skilla/v0.4.1/skilla \
   -o ~/.local/bin/skilla && chmod +x ~/.local/bin/skilla
 ```
 

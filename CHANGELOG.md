@@ -4,6 +4,8 @@ All notable changes are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versioning is SemVer.
 
 ## [Unreleased]
+
+## [0.4.1] - 2026-08-13
 ### Fixed
 - `plugin init` could scaffold a `plugin.json` that fails its own validator: the
   directory name was mapped character-by-character, so `my__tools` became the

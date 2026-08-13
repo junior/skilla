@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires bash, git and jq; cosign only for the 'verify' command
 allowed-tools: Bash(skilla:*) Bash(curl:*) Read
 metadata:
-  version: "0.4.0"
+  version: "0.4.1"
   author: "@junior"
   category: meta
   tags: "skills, plugins, installer, agentskills, agent-plugins, cli"

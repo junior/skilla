@@ -7,7 +7,7 @@
 
 set -e
 
-SKILLA_VERSION="0.4.0"
+SKILLA_VERSION="0.4.1"
 
 # Agent Plugins: the only spec version this client supports. Per the conformance
 # rules the manifest rules are selected locally from `$schema` — the schema is
