@@ -39,6 +39,11 @@ MCP config with `${PLUGIN_ROOT}`/`${PLUGIN_DATA}` already expanded.
 brew install junior/tap/skilla
 ```
 
+That needs no `brew tap` and no `brew trust`: since Homebrew 6 a fully qualified
+name trusts that one formula. Installing by short name, or from a Brewfile,
+needs `brew trust` first; see the
+[tap README](https://github.com/junior/homebrew-tap#tap-trust).
+
 **Managed — [mise](https://mise.jdx.dev):**
 
 ```bash
