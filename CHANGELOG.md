@@ -4,6 +4,10 @@ All notable changes are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versioning is SemVer.
 
 ## [Unreleased]
+### Added
+- A release workflow attaches the `skilla` script to every published release:
+  the file mise's github backend installs (`github:junior/skilla`), and lists
+  releases by. Run it by hand to attach the file to an older release.
 
 ## [0.4.1] - 2026-08-13
 ### Fixed

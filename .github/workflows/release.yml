@@ -1,0 +1,60 @@
+name: Release asset
+
+# Attaches the skilla script to a release. mise's github backend installs that
+# file, and lists only releases that carry it, so a release without it is
+# invisible to `mise` users. Runs when a release is published; run it by hand
+# (Actions > Release asset > Run workflow) to attach the file to an older one.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag of the release to attach skilla to, for example v0.4.1
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  attach:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: refs/tags/${{ env.TAG }}
+
+      - name: The script's version matches the tag
+        run: |
+          case "$TAG" in
+            v[0-9]*) ;;
+            *) echo "not a release tag: $TAG" >&2; exit 1 ;;
+          esac
+          have=$(sed -n 's/^SKILLA_VERSION="\(.*\)"$/\1/p' skilla)
+          if [ "v$have" != "$TAG" ]; then
+            echo "skilla says $have, the release is $TAG" >&2
+            exit 1
+          fi
+
+      - name: Attach skilla
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" skilla --clobber --repo "$GITHUB_REPOSITORY"
+
+      - name: The attached file is the tag's
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          want="sha256:$(sha256sum skilla | cut -d' ' -f1)"
+          have=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | select(.name == "skilla") | .digest')
+          if [ "$have" != "$want" ]; then
+            echo "attached $have, expected $want" >&2
+            exit 1
+          fi
+          echo "skilla $TAG attached: $want"
