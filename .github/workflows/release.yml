@@ -4,6 +4,14 @@ name: Release asset
 # file, and lists only releases that carry it, so a release without it is
 # invisible to `mise` users. Runs when a release is published; run it by hand
 # (Actions > Release asset > Run workflow) to attach the file to an older one.
+#
+# A published full release (not a pre-release, no hyphen in its tag) then moves
+# the Homebrew tap: the tap job points Formula/skilla.rb in junior/homebrew-tap
+# at the tag and its source tarball's checksum, committed and pushed with
+# HOMEBREW_TAP_TOKEN, a fine-grained token with read and write access to the
+# contents of that one repository, kept as a secret here. A run by hand never
+# moves the tap, so attaching the file to an older release cannot roll the
+# formula back.
 
 on:
   release:
@@ -58,3 +66,38 @@ jobs:
             exit 1
           fi
           echo "skilla $TAG attached: $want"
+
+  tap:
+    needs: attach
+    if: ${{ github.event_name == 'release' && !github.event.release.prerelease && !contains(github.event.release.tag_name, '-') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: junior/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Point the formula at this release
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -eu
+          url="https://github.com/junior/skilla/archive/refs/tags/${TAG}.tar.gz"
+          for attempt in 1 2 3 4 5 6; do
+            curl -sSfL -o /tmp/src.tar.gz "$url" && break
+            [ "$attempt" -lt 6 ] || { echo "no tarball at ${url}" >&2; exit 1; }
+            sleep 10
+          done
+          sha=$(sha256sum /tmp/src.tar.gz | cut -d' ' -f1)
+          sed -i -e "s|/archive/refs/tags/v[^\"]*\.tar\.gz|/archive/refs/tags/${TAG}.tar.gz|" \
+                 -e "s|sha256 \"[0-9a-f]\{64\}\"|sha256 \"${sha}\"|" Formula/skilla.rb
+          if git diff --quiet; then
+            echo "the formula already points at ${TAG}"
+            exit 0
+          fi
+          git config user.name "junior"
+          git config user.email "junior@users.noreply.github.com"
+          git commit -am "skilla ${TAG#v}"
+          git push

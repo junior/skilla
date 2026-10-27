@@ -8,6 +8,9 @@ All notable changes are documented here. Format follows
 - A release workflow attaches the `skilla` script to every published release:
   the file mise's github backend installs (`github:junior/skilla`), and lists
   releases by. Run it by hand to attach the file to an older release.
+- The same workflow then points the Homebrew formula in `junior/homebrew-tap` at
+  each published full release (not a pre-release, no hyphen in the tag). A run by
+  hand leaves the tap alone.
 
 ## [0.4.1] - 2026-08-13
 ### Fixed
